@@ -1,0 +1,339 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model UserProfile {
+  id              BigInt   @id @default(autoincrement())
+  fullName        String   @map("full_name") @db.VarChar(255)
+  email           String   @db.VarChar(254)
+  bio             String?  @db.LongText
+  objective       String?  @db.LongText
+  profilePicture  String?  @map("profile_picture") @db.VarChar(100)
+  signature       String?  @db.VarChar(100)
+  contactNumber   String?  @map("contact_number") @db.VarChar(20)
+  address         String?  @db.LongText
+  totalExperience Decimal  @map("total_experience") @db.Decimal(5, 2) @default(0.00)
+  facebookId      String?  @map("facebook_id") @db.VarChar(255)
+  instaId         String?  @map("insta_id") @db.VarChar(255)
+  linkedinId      String?  @map("linkedin_id") @db.VarChar(255)
+  twitterId       String?  @map("twitter_id") @db.VarChar(255)
+
+  experienceDetails ExperienceDetails[]
+  educationDetails  EducationDetails[]
+  certifications    CertificationDetails[]
+  skills            Skill[]
+  tools             Tool[]
+  contactMessages   ContactMessage[]
+  blogPosts         BlogPost[]
+  projects          ProjectDetails[]
+
+  @@map("user_profiles")
+}
+
+model ExperienceDetails {
+  id          BigInt    @id @default(autoincrement())
+  jobTitle    String    @map("job_title") @db.VarChar(255)
+  companyName String    @map("company_name") @db.VarChar(255)
+  location    String?   @db.VarChar(255)
+  startDate   DateTime  @map("start_date") @db.Date
+  endDate     DateTime? @map("end_date") @db.Date
+  description String?   @db.LongText
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("experience_details")
+}
+
+model EducationDetails {
+  id               BigInt    @id @default(autoincrement())
+  course           String    @db.VarChar(255)
+  institutionName  String    @map("institution_name") @db.VarChar(255)
+  specialization   String?   @db.VarChar(255)
+  startDate        DateTime  @map("start_date") @db.Date
+  endDate          DateTime? @map("end_date") @db.Date
+  grade            Decimal   @db.Decimal(4, 2)
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("education_details")
+}
+
+model CertificationDetails {
+  id                  BigInt    @id @default(autoincrement())
+  name                String    @db.VarChar(255)
+  issuingOrganization String    @map("issuing_organization") @db.VarChar(255)
+  issueDate           DateTime  @map("issue_date") @db.Date
+  expirationDate      DateTime? @map("expiration_date") @db.Date
+  credentialId        String?   @map("credential_id") @db.VarChar(255)
+  credentialUrl       String?   @map("credential_url") @db.VarChar(200)
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("certification_details")
+}
+
+model Skill {
+  id               BigInt @id @default(autoincrement())
+  skillName        String @map("skill_name") @db.VarChar(255)
+  proficiencyLevel String @map("proficiency_level") @db.VarChar(50)
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("skills")
+}
+
+model Tool {
+  id       BigInt @id @default(autoincrement())
+  toolName String @map("tool_name") @db.VarChar(255)
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("tools")
+}
+
+model ContactMessage {
+  id      BigInt   @id @default(autoincrement())
+  name    String   @db.VarChar(255)
+  email   String   @db.VarChar(254)
+  subject String   @db.VarChar(255)
+  message String   @db.LongText
+  sentAt  DateTime @map("sent_at") @default(now()) @db.DateTime(6)
+
+  userProfileId BigInt?      @map("user_profile_id")
+  userProfile   UserProfile? @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("contact_messages")
+}
+
+model BlogPost {
+  id            BigInt   @id @default(autoincrement())
+  title         String   @db.VarChar(255)
+  slug          String   @unique @db.VarChar(255)
+  content       String   @db.LongText
+  publishedDate DateTime @map("published_date") @default(now()) @db.Date
+  tags          String?  @db.VarChar(255)
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("blog_posts")
+}
+
+model ProjectDetails {
+  id               BigInt    @id @default(autoincrement())
+  title            String    @db.VarChar(255)
+  description      String    @db.LongText
+  technologiesUsed String    @map("technologies_used") @db.VarChar(255)
+  projectUrl       String?   @map("project_url") @db.VarChar(200)
+  image            String?   @db.VarChar(100)
+  startDate        DateTime  @map("start_date") @db.Date
+  endDate          DateTime? @map("end_date") @db.Date
+
+  userProfileId BigInt      @map("user_profile_id")
+  userProfile   UserProfile @relation(fields: [userProfileId], references: [id])
+
+  @@index([userProfileId])
+  @@map("projects")
+}
+
+model AdminUser {
+  id                   BigInt   @id @default(autoincrement())
+  // Both nullable: a "guest" member (added to appear in expense-split /
+  // savings-holder pickers) has neither — they exist only to be listed.
+  // Setting both later ("granting login access") promotes them to a
+  // full account without needing a separate person/member table.
+  email                String?  @unique @db.VarChar(255)
+  passwordHash         String?  @map("password_hash") @db.VarChar(255)
+  name                 String?  @db.VarChar(255)
+  isOwner              Boolean  @default(false) @map("is_owner")
+  isActive             Boolean  @default(true) @map("is_active")
+  hasPortfolioAccess   Boolean  @default(true) @map("has_portfolio_access")
+  // Independent per-section access within the expense-tracker module —
+  // e.g. someone can be given Savings only, without Expenses/Investments.
+  hasExpensesAccess    Boolean  @default(false) @map("has_expenses_access")
+  hasInvestmentsAccess Boolean  @default(false) @map("has_investments_access")
+  hasSavingsAccess     Boolean  @default(false) @map("has_savings_access")
+  createdAt            DateTime @map("created_at") @default(now())
+
+  expensesPaid          Expense[]                 @relation("ExpensePaidBy")
+  investmentsMade        Investment[]             @relation("InvestmentBy")
+  savingsContributions   SavingsContribution[]    @relation("SavingsContributionBy")
+  savingsAccountsHeld    SavingsGoal[]            @relation("SavingsAccountHolder")
+  savingsGoalsCreated    SavingsGoal[]            @relation("SavingsGoalCreatedBy")
+  expenseSplitShares     ExpenseSplitParticipant[]
+  savingsGoalMemberships SavingsGoalMember[]
+
+  @@map("admin_users")
+}
+
+model ExpenseCategory {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @unique @db.VarChar(100)
+  createdAt DateTime @map("created_at") @default(now())
+
+  expenses Expense[]
+
+  @@map("expense_categories")
+}
+
+// A trip/event bucket ("Goa Trip 2026") — unlike ExpenseCategory, names
+// aren't unique since trips are one-off and names can legitimately repeat.
+model ExpenseGroup {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar(150)
+  createdAt DateTime @map("created_at") @default(now())
+
+  expenses Expense[]
+
+  @@map("expense_groups")
+}
+
+model Expense {
+  id          BigInt   @id @default(autoincrement())
+  amount      Decimal  @db.Decimal(10, 2)
+  date        DateTime @db.Date
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @map("created_at") @default(now())
+
+  categoryId BigInt          @map("category_id")
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id])
+
+  paidByAdminUserId BigInt    @map("paid_by_admin_user_id")
+  paidBy            AdminUser @relation("ExpensePaidBy", fields: [paidByAdminUserId], references: [id])
+
+  // Which savings pot this expense was spent from — optional so existing/
+  // ad-hoc expenses aren't forced to have one, but the intent is that most
+  // expenses here are drawn down from a tracked savings account.
+  savingsGoalId BigInt?      @map("savings_goal_id")
+  savingsGoal   SavingsGoal? @relation(fields: [savingsGoalId], references: [id])
+
+  // Ad-hoc bucket for a set of related expenses — e.g. "Goa Trip 2026" —
+  // so they can be viewed and totalled together. Optional; unrelated to
+  // ExpenseCategory (a taxonomy) which every expense still has.
+  expenseGroupId BigInt?      @map("expense_group_id")
+  expenseGroup   ExpenseGroup? @relation(fields: [expenseGroupId], references: [id])
+
+  splitParticipants ExpenseSplitParticipant[]
+
+  @@index([categoryId])
+  @@index([paidByAdminUserId])
+  @@index([savingsGoalId])
+  @@index([expenseGroupId])
+  @@map("expenses")
+}
+
+// Equal-split participants for an expense (e.g. a trip cost split among a
+// subset of members). Absence of any rows here means the expense isn't
+// split — it's just attributed to paidBy in full.
+model ExpenseSplitParticipant {
+  id          BigInt   @id @default(autoincrement())
+  shareAmount Decimal  @map("share_amount") @db.Decimal(10, 2)
+  createdAt   DateTime @map("created_at") @default(now())
+
+  expenseId BigInt  @map("expense_id")
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  adminUserId BigInt    @map("admin_user_id")
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@unique([expenseId, adminUserId])
+  @@index([adminUserId])
+  @@map("expense_split_participants")
+}
+
+model Investment {
+  id             BigInt   @id @default(autoincrement())
+  title          String   @db.VarChar(255)
+  type           String   @db.VarChar(100)
+  amountInvested Decimal  @map("amount_invested") @db.Decimal(12, 2)
+  currentValue   Decimal? @map("current_value") @db.Decimal(12, 2)
+  date           DateTime @db.Date
+  notes          String?  @db.VarChar(500)
+  createdAt      DateTime @map("created_at") @default(now())
+
+  investedByAdminUserId BigInt    @map("invested_by_admin_user_id")
+  investedBy            AdminUser @relation("InvestmentBy", fields: [investedByAdminUserId], references: [id])
+
+  @@index([investedByAdminUserId])
+  @@map("investments")
+}
+
+model SavingsGoal {
+  id           BigInt    @id @default(autoincrement())
+  name         String    @db.VarChar(255)
+  // Optional: a goal can either target a specific amount (shows a progress
+  // bar) or be open-ended (e.g. "just saving ₹5000/month, no fixed total"),
+  // in which case it just shows a running total of contributions.
+  targetAmount Decimal?  @map("target_amount") @db.Decimal(12, 2)
+  targetDate   DateTime? @map("target_date") @db.Date
+  // Where the money physically sits, and who holds that account.
+  bankName     String?   @map("bank_name") @db.VarChar(255)
+  createdAt    DateTime  @map("created_at") @default(now())
+
+  accountHolderAdminUserId BigInt?    @map("account_holder_admin_user_id")
+  accountHolder            AdminUser? @relation("SavingsAccountHolder", fields: [accountHolderAdminUserId], references: [id])
+
+  // Who created this goal — private to them (and the account holder) by
+  // default, same as an Expense is private to whoever paid it. Nullable so
+  // existing rows (created before this column existed) don't suddenly lose
+  // visibility for everyone; only newly created goals get this set.
+  createdByAdminUserId BigInt?    @map("created_by_admin_user_id")
+  createdBy            AdminUser? @relation("SavingsGoalCreatedBy", fields: [createdByAdminUserId], references: [id])
+
+  contributions SavingsContribution[]
+  expenses      Expense[]
+  members       SavingsGoalMember[]
+
+  @@index([accountHolderAdminUserId])
+  @@map("savings_goals")
+}
+
+// Restricts a goal to specific people. No rows for a goal = visible to
+// everyone with Savings access (the default, back-compatible behavior);
+// any rows = only those members (plus the owner) can see/use that goal.
+model SavingsGoalMember {
+  id BigInt @id @default(autoincrement())
+
+  savingsGoalId BigInt      @map("savings_goal_id")
+  savingsGoal   SavingsGoal @relation(fields: [savingsGoalId], references: [id], onDelete: Cascade)
+
+  adminUserId BigInt    @map("admin_user_id")
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@unique([savingsGoalId, adminUserId])
+  @@index([adminUserId])
+  @@map("savings_goal_members")
+}
+
+model SavingsContribution {
+  id        BigInt   @id @default(autoincrement())
+  amount    Decimal  @db.Decimal(10, 2)
+  date      DateTime @db.Date
+  createdAt DateTime @map("created_at") @default(now())
+
+  goalId BigInt      @map("goal_id")
+  goal   SavingsGoal @relation(fields: [goalId], references: [id])
+
+  contributedByAdminUserId BigInt    @map("contributed_by_admin_user_id")
+  contributedBy            AdminUser @relation("SavingsContributionBy", fields: [contributedByAdminUserId], references: [id])
+
+  @@index([goalId])
+  @@index([contributedByAdminUserId])
+  @@map("savings_contributions")
+}
