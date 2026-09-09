@@ -11,6 +11,12 @@ dist/
 # never commit this; .env.example documents the required keys instead.
 .env
 
+# User-uploaded content (profile pictures, project images, etc.) — the
+# files already in this folder as of the initial commit stay tracked, but
+# anything added after that stays local-only rather than entering git
+# history on every upload.
+uploads/
+
 # Compiled Java class files
 *.class
 
