@@ -8,6 +8,7 @@ const includeRelations = {
     include: { fromAdminUser: userSelect, toAdminUser: userSelect },
     orderBy: { date: "desc" as const },
   },
+  members: { include: { adminUser: userSelect } },
 } as const;
 
 export async function listExpenseGroups() {
@@ -18,7 +19,27 @@ export interface ExpenseGroupInput {
   name: string;
   startDate?: string | null;
   endDate?: string | null;
+  // The people in the group. Undefined leaves them as they are on update.
+  memberAdminUserIds?: bigint[];
 }
+
+async function assertMembersExist(ids: bigint[]) {
+  const found = await prisma.adminUser.count({ where: { id: { in: ids } } });
+  if (found !== ids.length) {
+    throw BadRequestError("One of the selected people doesn't exist");
+  }
+}
+
+async function replaceMembers(expenseGroupId: bigint, adminUserIds: bigint[]) {
+  await prisma.expenseGroupMember.deleteMany({ where: { expenseGroupId } });
+  if (adminUserIds.length > 0) {
+    await prisma.expenseGroupMember.createMany({
+      data: adminUserIds.map((adminUserId) => ({ expenseGroupId, adminUserId })),
+    });
+  }
+}
+
+const unique = (ids: bigint[]) => [...new Set(ids)];
 
 const dayOf = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -28,16 +49,21 @@ function assertValidRange(startDate: string | null | undefined, endDate: string 
   }
 }
 
-export async function createExpenseGroup(input: ExpenseGroupInput) {
+// `creatorId` joins the group when no members are given (e.g. a group
+// typed straight into the expense form's picker).
+export async function createExpenseGroup(input: ExpenseGroupInput, creatorId: bigint) {
   assertValidRange(input.startDate, input.endDate);
-  return prisma.expenseGroup.create({
+  const memberIds = unique(input.memberAdminUserIds ?? [creatorId]);
+  await assertMembersExist(memberIds);
+  const created = await prisma.expenseGroup.create({
     data: {
       name: input.name,
       startDate: input.startDate ? new Date(input.startDate) : null,
       endDate: input.endDate ? new Date(input.endDate) : null,
     },
-    include: includeRelations,
   });
+  await replaceMembers(created.id, memberIds);
+  return prisma.expenseGroup.findUniqueOrThrow({ where: { id: created.id }, include: includeRelations });
 }
 
 async function findGroupOrThrow(id: bigint) {
@@ -72,6 +98,21 @@ export async function updateExpenseGroup(id: bigint, input: Partial<ExpenseGroup
     }
   }
 
+  if (input.memberAdminUserIds !== undefined) {
+    const memberIds = unique(input.memberAdminUserIds);
+    await assertMembersExist(memberIds);
+    // Someone who paid for one of the group's expenses has to stay in it.
+    const payers = await prisma.expense.findMany({
+      where: { expenseGroupId: id, paidByAdminUserId: { notIn: memberIds } },
+      select: { paidBy: { select: { name: true, email: true } } },
+    });
+    if (payers.length > 0) {
+      const who = payers[0].paidBy.name || payers[0].paidBy.email || "Someone";
+      throw BadRequestError(`${who} paid for an expense in this group, so they can't be removed from it`);
+    }
+    await replaceMembers(id, memberIds);
+  }
+
   return prisma.expenseGroup.update({
     where: { id },
     data: {
@@ -104,6 +145,7 @@ export async function deleteExpenseGroup(id: bigint) {
     );
   }
   await prisma.expenseGroupSettlement.deleteMany({ where: { expenseGroupId: id } });
+  await prisma.expenseGroupMember.deleteMany({ where: { expenseGroupId: id } });
   await prisma.expenseGroup.delete({ where: { id } });
 }
 

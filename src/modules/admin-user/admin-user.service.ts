@@ -25,6 +25,8 @@ const linkedRecordCounts = {
   savingsGoalsCreated: true,
   expenseSplitShares: true,
   savingsGoalMemberships: true,
+  expenseGroupMemberships: true,
+  expensesCreated: true,
   settlementsPaid: true,
   settlementsReceived: true,
 } as const;

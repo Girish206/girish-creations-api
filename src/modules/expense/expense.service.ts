@@ -16,13 +16,20 @@ export interface RequestingAdmin {
   isSuperAdmin: boolean;
 }
 
-// Private by default (only who paid it can see it) — split with others and
-// it becomes visible to everyone in that split too. Super admins see everything.
+// Private by default (only who paid it, and who logged it, can see it) —
+// split with others and it becomes visible to everyone in that split too.
+// Super admins see everything.
 export async function listExpenses(admin: RequestingAdmin) {
   return prisma.expense.findMany({
     where: admin.isSuperAdmin
       ? undefined
-      : { OR: [{ paidByAdminUserId: admin.id }, { splitParticipants: { some: { adminUserId: admin.id } } }] },
+      : {
+          OR: [
+            { paidByAdminUserId: admin.id },
+            { createdByAdminUserId: admin.id },
+            { splitParticipants: { some: { adminUserId: admin.id } } },
+          ],
+        },
     include: includeRelations,
     orderBy: { date: "desc" },
   });
@@ -36,7 +43,9 @@ async function assertExpenseAccess(expenseId: bigint, admin: RequestingAdmin) {
   });
   if (!expense) return;
   const allowed =
-    expense.paidByAdminUserId === admin.id || expense.splitParticipants.some((p) => p.adminUserId === admin.id);
+    expense.paidByAdminUserId === admin.id ||
+    expense.createdByAdminUserId === admin.id ||
+    expense.splitParticipants.some((p) => p.adminUserId === admin.id);
   if (!allowed) {
     throw ForbiddenError("You don't have access to this expense");
   }
@@ -73,6 +82,29 @@ async function assertDateInGroupWindow(expenseGroupId: bigint | null | undefined
           : `on or before ${formatDay(group.endDate!)}`;
     throw BadRequestError(`Expenses in "${group.name}" must be dated ${window}`);
   }
+}
+
+// Who can be marked as having paid: yourself, or — for an expense in a
+// group — anyone in that group. Super admins may pick anyone. `keepPayer`
+// is an edit's existing payer, still allowed as long as the expense isn't
+// in a group that excludes them (expenses logged before groups had people).
+async function assertPayerAllowed(
+  payerId: bigint,
+  expenseGroupId: bigint | null | undefined,
+  admin: RequestingAdmin,
+  keepPayer?: bigint,
+) {
+  if (admin.isSuperAdmin || payerId === admin.id) return;
+  const members = expenseGroupId
+    ? await prisma.expenseGroupMember.findMany({ where: { expenseGroupId }, select: { adminUserId: true } })
+    : [];
+  if (members.some((member) => member.adminUserId === payerId)) return;
+  if (keepPayer === payerId && members.length === 0) return;
+  throw BadRequestError(
+    expenseGroupId
+      ? "The person who paid must be one of the people in this group"
+      : "Only expenses in a group can be marked as paid by someone else",
+  );
 }
 
 async function assertSavingsGoalOpen(savingsGoalId: bigint | null | undefined) {
@@ -127,8 +159,9 @@ async function replaceSplitParticipants(expenseId: bigint, amount: string, admin
   });
 }
 
-export async function createExpense(input: ExpenseInput) {
+export async function createExpense(input: ExpenseInput, admin: RequestingAdmin) {
   await assertGroupOpen(input.expenseGroupId);
+  await assertPayerAllowed(input.paidByAdminUserId, input.expenseGroupId, admin);
   await assertSavingsGoalOpen(input.savingsGoalId);
   await assertDateInGroupWindow(input.expenseGroupId, new Date(input.date));
 
@@ -139,6 +172,7 @@ export async function createExpense(input: ExpenseInput) {
       description: input.description,
       categoryId: input.categoryId,
       paidByAdminUserId: input.paidByAdminUserId,
+      createdByAdminUserId: admin.id,
       savingsGoalId: input.savingsGoalId ?? null,
       expenseGroupId: input.expenseGroupId ?? null,
     },
@@ -164,10 +198,12 @@ export async function updateExpense(id: bigint, input: Partial<ExpenseInput>, ad
   if (input.savingsGoalId !== undefined && input.savingsGoalId !== existing.savingsGoalId) {
     await assertSavingsGoalOpen(input.savingsGoalId);
   }
-  await assertDateInGroupWindow(
-    input.expenseGroupId !== undefined ? input.expenseGroupId : existing.expenseGroupId,
-    input.date ? new Date(input.date) : existing.date,
-  );
+  const groupId = input.expenseGroupId !== undefined ? input.expenseGroupId : existing.expenseGroupId;
+  await assertDateInGroupWindow(groupId, input.date ? new Date(input.date) : existing.date);
+  const payerId = input.paidByAdminUserId ?? existing.paidByAdminUserId;
+  if (payerId !== existing.paidByAdminUserId || groupId !== existing.expenseGroupId) {
+    await assertPayerAllowed(payerId, groupId, admin, existing.paidByAdminUserId);
+  }
 
   const updated = await prisma.expense.update({
     where: { id },

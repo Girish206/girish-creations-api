@@ -12,11 +12,12 @@ const groupSchema = z.object({
   name: z.string().trim().min(1),
   startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
+  memberAdminUserIds: z.array(z.coerce.bigint()).optional(),
 });
 
 export async function createExpenseGroupHandler(req: Request, res: Response) {
   const input = groupSchema.parse(req.body);
-  const created = await expenseGroupService.createExpenseGroup(input);
+  const created = await expenseGroupService.createExpenseGroup(input, BigInt(req.admin!.sub));
   res.status(201).json({ data: created });
 }
 

@@ -33,6 +33,9 @@ model UserProfile {
   profilePicture  String? @map("profile_picture")
   signature       String?
   contactNumber   String? @map("contact_number")
+  // Whether visitors see contactNumber on the public portfolio. Null on
+  // profiles saved before the setting existed, which means shown.
+  showContactNumber Boolean? @map("show_contact_number")
   address         String?
   totalExperience String  @default("0.00") @map("total_experience")
   facebookId      String? @map("facebook_id")
@@ -42,6 +45,15 @@ model UserProfile {
   // "/api/files/<id>" path of an uploaded PDF, or a static path for the
   // original site's bundled résumé.
   resume          String?
+  // Which public design the portfolio uses: "tech" (developer look —
+  // terminal, tech stack, monospace accents) or "classic" (plain, editorial
+  // look for non-technical people). Null on profiles saved before the choice
+  // existed, which means "tech".
+  portfolioStyle  String? @map("portfolio_style")
+  // Colour shade of the classic design: "emerald", "ocean", "indigo",
+  // "rose", "sunset" or "violet". Null (or a retired shade name) means
+  // "emerald". Unused by the tech design.
+  portfolioAccent String? @map("portfolio_accent")
 
   adminUserId BigInt?    @unique @map("admin_user_id")
   adminUser   AdminUser? @relation(fields: [adminUserId], references: [id])
@@ -208,6 +220,8 @@ model AdminUser {
   savingsGoalsCreated    SavingsGoal[]             @relation("SavingsGoalCreatedBy")
   expenseSplitShares     ExpenseSplitParticipant[]
   savingsGoalMemberships SavingsGoalMember[]
+  expenseGroupMemberships ExpenseGroupMember[]
+  expensesCreated        Expense[]                 @relation("ExpenseCreatedBy")
   settlementsPaid        ExpenseGroupSettlement[]  @relation("SettlementFrom")
   settlementsReceived    ExpenseGroupSettlement[]  @relation("SettlementTo")
 
@@ -246,8 +260,27 @@ model ExpenseGroup {
 
   expenses    Expense[]
   settlements ExpenseGroupSettlement[]
+  members     ExpenseGroupMember[]
 
   @@map("expense_groups")
+}
+
+// The people on a trip/event ("Goa Trip 2026": Girish, Ravi, Asha). An
+// expense in the group can be marked as paid by any of them. No rows = an
+// older group from before members existed; its expenses are paid by
+// whoever logs them.
+model ExpenseGroupMember {
+  id BigInt @id @default(0) @map("_id")
+
+  expenseGroupId BigInt       @map("expense_group_id")
+  expenseGroup   ExpenseGroup @relation(fields: [expenseGroupId], references: [id], onDelete: Cascade)
+
+  adminUserId BigInt    @map("admin_user_id")
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@unique([expenseGroupId, adminUserId])
+  @@index([adminUserId])
+  @@map("expense_group_members")
 }
 
 // A repayment between two members to settle a group's split balances —
@@ -286,6 +319,12 @@ model Expense {
 
   paidByAdminUserId BigInt    @map("paid_by_admin_user_id")
   paidBy            AdminUser @relation("ExpensePaidBy", fields: [paidByAdminUserId], references: [id])
+
+  // Who logged it — usually the payer, but someone can log an expense a
+  // fellow group member paid, and should still see it afterwards. Null on
+  // expenses logged before this was recorded (the payer logged those).
+  createdByAdminUserId BigInt?    @map("created_by_admin_user_id")
+  createdBy            AdminUser? @relation("ExpenseCreatedBy", fields: [createdByAdminUserId], references: [id])
 
   // Which savings pot this expense was spent from — optional so existing/
   // ad-hoc expenses aren't forced to have one, but the intent is that most

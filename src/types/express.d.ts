@@ -17,6 +17,9 @@ declare global {
       admin?: AdminTokenPayload;
       // Set by middleware/portfolioScope.ts for portfolio routes.
       portfolioProfileId?: bigint;
+      // True when a visitor is reading /portfolios/:username (rather than
+      // the owner editing it), so private fields can be left out.
+      portfolioIsPublic?: boolean;
     }
   }
 }

@@ -11,6 +11,7 @@ import { isSuperAdmin } from "./auth";
 // Public reads: /api/portfolios/:username/...
 export async function resolvePublicPortfolio(req: Request, _res: Response, next: NextFunction) {
   req.portfolioProfileId = await getVisibleProfileId(String(req.params.username));
+  req.portfolioIsPublic = true;
   next();
 }
 

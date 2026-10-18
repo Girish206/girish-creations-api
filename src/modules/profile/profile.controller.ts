@@ -17,6 +17,11 @@ export async function listManageablePortfoliosHandler(_req: Request, res: Respon
 
 export async function getProfileHandler(req: Request, res: Response) {
   const profile = await profileService.getProfile(scopedProfileId(req));
+  // A hidden phone number never leaves the server for visitors; the owner
+  // still gets it to edit.
+  if (req.portfolioIsPublic && profile.showContactNumber === false) {
+    profile.contactNumber = null;
+  }
   res.json({ data: profile });
 }
 
@@ -27,11 +32,18 @@ const updateProfileSchema = z.object({
   bio: z.string().nullable().optional(),
   objective: z.string().nullable().optional(),
   contactNumber: z.string().nullable().optional(),
+  // "true" / "false" — multipart form data sends every field as a string.
+  showContactNumber: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
   address: z.string().nullable().optional(),
   facebookId: z.string().nullable().optional(),
   instaId: z.string().nullable().optional(),
   linkedinId: z.string().nullable().optional(),
   twitterId: z.string().nullable().optional(),
+  portfolioStyle: z.enum(profileService.PORTFOLIO_STYLES).optional(),
+  portfolioAccent: z.enum(profileService.PORTFOLIO_ACCENTS).optional(),
   // Sent as the string "true" from multipart form data. Ignored if a new
   // signature file is uploaded in the same request â€” the upload wins.
   removeSignature: z.string().optional(),

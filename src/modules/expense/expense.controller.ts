@@ -27,7 +27,7 @@ const expenseSchema = z.object({
 export async function createExpenseHandler(req: Request, res: Response) {
   const input = expenseSchema.parse(req.body);
   const paidByAdminUserId = input.paidByAdminUserId ?? BigInt(req.admin!.sub);
-  const created = await expenseService.createExpense({ ...input, paidByAdminUserId });
+  const created = await expenseService.createExpense({ ...input, paidByAdminUserId }, requestingAdmin(req));
   res.status(201).json({ data: created });
 }
 

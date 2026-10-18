@@ -25,13 +25,35 @@ export function formatExperienceInYears(totalExperience: string | number) {
 // Computes experience live from the current experience_details rows rather than
 // trusting the stored total_experience column, so an ongoing role's duration
 // keeps advancing on every read instead of only updating when an admin edits it.
-async function withComputed<T extends { id: bigint }>(profile: T) {
-  const totalExperience = await calculateTotalExperienceYears(profile.id);
+//
+// Also adds what the public site needs to decide what to show:
+//  - isCreator: the portfolio belongs to the owner account, the person who
+//    built the site. Freelance/hire-me content only appears on theirs.
+//  - counts: how many of each section's rows exist, so pages and nav links
+//    with nothing in them can be hidden instead of showing filler.
+async function withComputed<T extends { id: bigint; adminUserId: bigint | null }>(profile: T) {
+  const where = { userProfileId: profile.id };
+  const [totalExperience, owner, experience, education, certifications, skills, tools, projects, blogPosts] =
+    await Promise.all([
+      calculateTotalExperienceYears(profile.id),
+      profile.adminUserId === null
+        ? null
+        : prisma.adminUser.findUnique({ where: { id: profile.adminUserId }, select: { isOwner: true } }),
+      prisma.experienceDetails.count({ where }),
+      prisma.educationDetails.count({ where }),
+      prisma.certificationDetails.count({ where }),
+      prisma.skill.count({ where }),
+      prisma.tool.count({ where }),
+      prisma.projectDetails.count({ where }),
+      prisma.blogPost.count({ where }),
+    ]);
   return {
     ...profile,
     totalExperience: totalExperience.toFixed(2),
     formattedExperience: formatExperience(totalExperience),
     formattedExperienceInYears: formatExperienceInYears(totalExperience),
+    isCreator: owner?.isOwner ?? false,
+    counts: { experience, education, certifications, skills, tools, projects, blogPosts },
   };
 }
 
@@ -46,11 +68,18 @@ const visibleWhere = {
 export async function listPortfolios() {
   const rows = await prisma.userProfile.findMany({
     where: visibleWhere,
-    select: { id: true, username: true, fullName: true, profilePicture: true, bio: true },
+    select: {
+      id: true,
+      username: true,
+      fullName: true,
+      profilePicture: true,
+      bio: true,
+      adminUser: { select: { isOwner: true } },
+    },
     orderBy: { id: "asc" },
   });
   return Promise.all(
-    rows.map(async (row) => {
+    rows.map(async ({ adminUser, ...row }) => {
       const [headline, projectCount, totalExperience] = await Promise.all([
         prisma.experienceDetails.findFirst({
           where: { userProfileId: row.id },
@@ -62,6 +91,8 @@ export async function listPortfolios() {
       ]);
       return {
         ...row,
+        // The person who built the site; the directory credits them.
+        isCreator: adminUser?.isOwner ?? false,
         jobTitle: headline?.jobTitle ?? null,
         companyName: headline && !headline.endDate ? headline.companyName : null,
         projectCount,
@@ -155,6 +186,38 @@ export async function uniqueUsername(base: string) {
   return candidate;
 }
 
+// Profile creations in progress, by admin account id. The admin panel loads
+// several portfolio endpoints at once on a first visit, and each one runs
+// resolveOwnPortfolio — without this they would all see "no profile yet"
+// and each create one, leaving the account with duplicate portfolios.
+const pendingCreates = new Map<bigint, Promise<Awaited<ReturnType<typeof createOwnProfile>>>>();
+
+async function createOwnProfile(adminUserId: bigint) {
+  const admin = await prisma.adminUser.findUnique({ where: { id: adminUserId } });
+  if (!admin) {
+    throw NotFoundError("Admin user not found");
+  }
+  const fullName = admin.name?.trim() || admin.email?.split("@")[0] || "New member";
+  try {
+    return await prisma.userProfile.create({
+      data: {
+        fullName,
+        email: admin.email ?? "",
+        username: await uniqueUsername(fullName),
+        adminUserId,
+      },
+    });
+  } catch (err) {
+    // Another server instance won the race: the unique index on
+    // admin_user_id rejected this one, so use the profile it created.
+    const created = await prisma.userProfile.findUnique({ where: { adminUserId } });
+    if (created) {
+      return created;
+    }
+    throw err;
+  }
+}
+
 // The portfolio an admin account edits. Created on first use, so granting
 // someone portfolio access is all it takes to give them their own page.
 export async function getOrCreateOwnProfile(adminUserId: bigint) {
@@ -163,20 +226,19 @@ export async function getOrCreateOwnProfile(adminUserId: bigint) {
     return existing;
   }
 
-  const admin = await prisma.adminUser.findUnique({ where: { id: adminUserId } });
-  if (!admin) {
-    throw NotFoundError("Admin user not found");
+  let pending = pendingCreates.get(adminUserId);
+  if (!pending) {
+    pending = createOwnProfile(adminUserId).finally(() => pendingCreates.delete(adminUserId));
+    pendingCreates.set(adminUserId, pending);
   }
-  const fullName = admin.name?.trim() || admin.email?.split("@")[0] || "New member";
-  return prisma.userProfile.create({
-    data: {
-      fullName,
-      email: admin.email ?? "",
-      username: await uniqueUsername(fullName),
-      adminUserId,
-    },
-  });
+  return pending;
 }
+
+export const PORTFOLIO_STYLES = ["tech", "classic"] as const;
+export type PortfolioStyle = (typeof PORTFOLIO_STYLES)[number];
+
+export const PORTFOLIO_ACCENTS = ["emerald", "ocean", "indigo", "rose", "sunset", "violet"] as const;
+export type PortfolioAccent = (typeof PORTFOLIO_ACCENTS)[number];
 
 export interface UpdateProfileInput {
   username?: string;
@@ -185,6 +247,7 @@ export interface UpdateProfileInput {
   bio?: string | null;
   objective?: string | null;
   contactNumber?: string | null;
+  showContactNumber?: boolean;
   address?: string | null;
   facebookId?: string | null;
   instaId?: string | null;
@@ -193,6 +256,8 @@ export interface UpdateProfileInput {
   profilePicture?: string;
   signature?: string | null;
   resume?: string | null;
+  portfolioStyle?: PortfolioStyle;
+  portfolioAccent?: PortfolioAccent;
 }
 
 export async function updateProfile(id: bigint, data: UpdateProfileInput) {
