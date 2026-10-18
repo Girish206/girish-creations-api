@@ -1,18 +1,23 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../utils/httpError";
-import type { Prisma } from "@prisma/client";
 import { calculateTotalExperienceYears } from "../experience/experience.utils";
+import { deleteUploadedFile } from "../../middleware/upload";
 
 // Ported from main/models.py UserProfile.formatted_experience() /
 // formatted_experience_in_years().
-export function formatExperience(totalExperience: Prisma.Decimal | number) {
-  const years = Number(totalExperience);
-  const wholeYears = Math.floor(years);
-  const months = Math.round((years - wholeYears) * 12);
-  return `${wholeYears} years ${months} months`;
+function plural(count: number, unit: string) {
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
 }
 
-export function formatExperienceInYears(totalExperience: Prisma.Decimal | number) {
+// Completed months only (floored, not rounded) — rounding reported a month
+// early (e.g. "5 years 8 months" for 5y 7m 17d) and could even produce
+// "12 months", and it disagreed with the per-role durations on the About page.
+export function formatExperience(totalExperience: string | number) {
+  const totalMonths = Math.floor(Number(totalExperience) * 12 + 1e-9);
+  return `${plural(Math.floor(totalMonths / 12), "year")} ${plural(totalMonths % 12, "month")}`;
+}
+
+export function formatExperienceInYears(totalExperience: string | number) {
   return Math.floor(Number(totalExperience));
 }
 
@@ -73,5 +78,12 @@ export async function updateProfile(data: UpdateProfileInput) {
     where: { id: existing.id },
     data,
   });
+  // Drop the stored images this update just replaced or removed.
+  if (data.profilePicture !== undefined && data.profilePicture !== existing.profilePicture) {
+    await deleteUploadedFile(existing.profilePicture);
+  }
+  if (data.signature !== undefined && data.signature !== existing.signature) {
+    await deleteUploadedFile(existing.signature);
+  }
   return withComputed(updated);
 }

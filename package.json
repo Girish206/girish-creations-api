@@ -7,21 +7,20 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "import:mysql": "tsx prisma/import-mysql.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@prisma/adapter-mariadb": "^7.10.0",
-    "@prisma/client": "^7.10.0",
+    "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "mariadb": "^3.5.4",
     "multer": "^2.3.0",
     "zod": "^4.5.4"
   },
@@ -32,15 +31,8 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.5.0",
-    "prisma": "^7.10.0",
+    "prisma": "^6.19.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"
-  },
-  "overrides": {
-    "mysql2": "^3.24.4",
-    "deepmerge-ts": "^8.0.0",
-    "@prisma/adapter-mariadb": {
-      "mariadb": "^3.5.4"
-    }
   }
 }

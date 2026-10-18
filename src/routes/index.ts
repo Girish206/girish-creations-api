@@ -12,6 +12,7 @@ import { toolAdminRouter, toolPublicRouter } from "../modules/tool/tool.routes";
 import { projectAdminRouter, projectPublicRouter } from "../modules/project/project.routes";
 import { blogAdminRouter, blogPublicRouter } from "../modules/blog/blog.routes";
 import { contactAdminRouter, contactPublicRouter } from "../modules/contact/contact.routes";
+import { filePublicRouter } from "../modules/file/file.routes";
 import { adminUserAdminRouter, expenseMembersAdminRouter } from "../modules/admin-user/admin-user.routes";
 import { expenseCategoryAdminRouter } from "../modules/expense-category/expense-category.routes";
 import { expenseGroupAdminRouter } from "../modules/expense-group/expense-group.routes";
@@ -29,6 +30,7 @@ publicRouter.use("/tools", toolPublicRouter);
 publicRouter.use("/projects", projectPublicRouter);
 publicRouter.use("/blog", blogPublicRouter);
 publicRouter.use("/contact", contactPublicRouter);
+publicRouter.use("/files", filePublicRouter);
 
 export const adminRouter = Router();
 adminRouter.use("/auth", authRouter);

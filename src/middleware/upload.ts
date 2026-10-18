@@ -1,37 +1,40 @@
-import fs from "node:fs";
-import path from "node:path";
 import multer from "multer";
-import { env } from "../config/env";
+import { prisma } from "../lib/prisma";
 
-const uploadsRoot = path.resolve(env.uploadsDir);
+// Vercel rejects any request body over 4.5MB before it reaches this code
+// (and a MongoDB document is capped at 16MB, as uploads are stored inline in
+// one — see uploadFile below), so cap files at 4MB to leave room for the
+// rest of the multipart form and fail with a clear 4xx instead.
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
-const FIELD_SUBFOLDERS: Record<string, string> = {
-  profilePicture: "profile_pictures",
-  signature: "signatures",
-  image: "project_images",
-};
+// Buffers the file in memory; uploadFile then writes the bytes into the
+// "files" collection, so no local disk (or external blob store) is involved.
+export const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } });
 
-function subfolderFor(fieldname: string): string {
-  return FIELD_SUBFOLDERS[fieldname] ?? "misc";
+export const FILE_URL_PREFIX = "/api/files/";
+
+// Stores a multer-buffered file in the database and returns the path it's
+// served from (GET /api/files/:id) — that path is what gets saved on the
+// referencing record (profile picture, signature, project image).
+export async function uploadFile(file: Express.Multer.File): Promise<string> {
+  const stored = await prisma.storedFile.create({
+    data: {
+      filename: file.originalname,
+      contentType: file.mimetype,
+      size: file.size,
+      data: new Uint8Array(file.buffer),
+    },
+    select: { id: true },
+  });
+  return `${FILE_URL_PREFIX}${stored.id}`;
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(uploadsRoot, subfolderFor(file.fieldname));
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-    cb(null, `${base}-${Date.now()}${ext}`);
-  },
-});
-
-export const upload = multer({ storage });
-
-// Relative path (as stored in the DB, e.g. "profile_pictures/foo-123.png") for an
-// uploaded file, derived from the multer field name that received it.
-export function relativeUploadPath(file: Express.Multer.File) {
-  return path.posix.join(subfolderFor(file.fieldname), file.filename);
+// Removes a previously uploaded file once nothing references it anymore
+// (image replaced, signature removed, project deleted), so the DB doesn't
+// accumulate orphaned binaries. Ignores anything that isn't one of ours.
+export async function deleteUploadedFile(url: string | null | undefined) {
+  if (!url?.startsWith(FILE_URL_PREFIX)) return;
+  const rawId = url.slice(FILE_URL_PREFIX.length);
+  if (!/^\d+$/.test(rawId)) return;
+  await prisma.storedFile.deleteMany({ where: { id: BigInt(rawId) } });
 }

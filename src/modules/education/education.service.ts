@@ -23,7 +23,7 @@ export async function createEducation(input: EducationInput) {
       specialization: input.specialization,
       startDate: new Date(input.startDate),
       endDate: input.endDate ? new Date(input.endDate) : null,
-      grade: input.grade,
+      grade: String(input.grade),
       userProfileId: input.userProfileId,
     },
   });
@@ -39,6 +39,7 @@ export async function updateEducation(id: bigint, input: Partial<EducationInput>
     where: { id },
     data: {
       ...input,
+      grade: input.grade !== undefined ? String(input.grade) : undefined,
       startDate: input.startDate ? new Date(input.startDate) : undefined,
       endDate: input.endDate !== undefined ? (input.endDate ? new Date(input.endDate) : null) : undefined,
     },

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as profileService from "./profile.service";
-import { relativeUploadPath } from "../../middleware/upload";
+import { uploadFile } from "../../middleware/upload";
 
 export async function getProfileHandler(_req: Request, res: Response) {
   const profile = await profileService.getProfile();
@@ -33,9 +33,9 @@ export async function updateProfileHandler(req: Request, res: Response) {
 
   const profile = await profileService.updateProfile({
     ...data,
-    ...(profilePictureFile ? { profilePicture: relativeUploadPath(profilePictureFile) } : {}),
+    ...(profilePictureFile ? { profilePicture: await uploadFile(profilePictureFile) } : {}),
     ...(signatureFile
-      ? { signature: relativeUploadPath(signatureFile) }
+      ? { signature: await uploadFile(signatureFile) }
       : removeSignature === "true"
         ? { signature: null }
         : {}),

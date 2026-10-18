@@ -1,6 +1,4 @@
-import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { PrismaClient } from "@prisma/client";
-import { env } from "../config/env";
 
 // BigInt primary keys (Django's BigAutoField) don't serialize via JSON.stringify by
 // default. Values on this single-owner portfolio site never approach
@@ -9,28 +7,62 @@ import { env } from "../config/env";
   return Number(this);
 };
 
-function parseDatabaseUrl(url: string) {
-  const parsed = new URL(url);
-  const isLocalHost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
-  return {
-    host: parsed.hostname,
-    port: parsed.port ? Number(parsed.port) : 3306,
-    user: decodeURIComponent(parsed.username),
-    password: decodeURIComponent(parsed.password),
-    database: parsed.pathname.replace(/^\//, ""),
-    // Managed hosts (Aiven, PlanetScale, etc.) require TLS and reject plain
-    // connections outright; local dev MySQL has no cert to validate against.
-    ssl: isLocalHost ? undefined : { rejectUnauthorized: false },
-  };
+const base = new PrismaClient();
+
+// $runCommandRaw returns extended JSON, so a counter can come back as a plain
+// number (int32) or wrapped, e.g. { $numberLong: "12" }.
+function toBigInt(value: unknown): bigint {
+  if (typeof value === "object" && value !== null) {
+    return BigInt(Object.values(value)[0] as string);
+  }
+  return BigInt(value as number);
 }
 
-const adapter = new PrismaMariaDb({
-  ...parseDatabaseUrl(env.databaseUrl),
-  connectionLimit: 5,
-  // The mariadb pool's default socket-connect timeout (~1s) is too short
-  // for a remote managed host over TLS (Aiven, etc.) — bump it well past
-  // typical handshake latency instead of failing the very first request.
-  connectTimeout: 15000,
-});
+// MongoDB has no autoincrement, so each model's next id comes from an atomic
+// $inc on its document in the "counters" collection (seeded to the max
+// imported id by prisma/import-mysql.ts). Reserves `count` consecutive ids
+// and returns the first one.
+async function reserveIds(model: string, count: number): Promise<bigint> {
+  const result = (await base.$runCommandRaw({
+    findAndModify: "counters",
+    query: { _id: model },
+    update: { $inc: { seq: count } },
+    new: true,
+    upsert: true,
+  })) as { value: { seq: unknown } };
+  return toBigInt(result.value.seq) - BigInt(count) + 1n;
+}
 
-export const prisma = new PrismaClient({ adapter });
+type WithId = { id?: bigint | number };
+
+export const prisma = base.$extends({
+  query: {
+    $allModels: {
+      async create({ model, args, query }) {
+        const data = args.data as WithId;
+        if (!data.id) {
+          data.id = await reserveIds(model, 1);
+        }
+        return query(args);
+      },
+      async createMany({ model, args, query }) {
+        const rows = (Array.isArray(args.data) ? args.data : [args.data]) as WithId[];
+        const missing = rows.filter((row) => !row.id);
+        if (missing.length > 0) {
+          const first = await reserveIds(model, missing.length);
+          missing.forEach((row, index) => {
+            row.id = first + BigInt(index);
+          });
+        }
+        return query(args);
+      },
+      async upsert({ model, args, query }) {
+        const create = args.create as WithId;
+        if (!create.id) {
+          create.id = await reserveIds(model, 1);
+        }
+        return query(args);
+      },
+    },
+  },
+});

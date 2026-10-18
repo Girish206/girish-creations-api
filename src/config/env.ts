@@ -16,5 +16,4 @@ export const env = {
   adminSeedEmail: process.env.ADMIN_SEED_EMAIL,
   adminSeedPassword: process.env.ADMIN_SEED_PASSWORD,
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
-  uploadsDir: process.env.UPLOADS_DIR ?? "./uploads",
 };

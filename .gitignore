@@ -11,6 +11,10 @@ dist/
 # never commit this; .env.example documents the required keys instead.
 .env
 
+# One-off MySQL export used by prisma/import-mysql.ts — contains personal
+# data and admin password hashes.
+prisma/mysql-export.json
+
 # User-uploaded content (profile pictures, project images, etc.) — the
 # files already in this folder as of the initial commit stay tracked, but
 # anything added after that stays local-only rather than entering git

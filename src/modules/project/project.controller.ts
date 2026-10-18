@@ -4,7 +4,7 @@ import * as projectService from "./project.service";
 import { getProfileId } from "../profile/profile.service";
 import { parseId } from "../../utils/parseId";
 import { parsePagination, paginationSkipTake, buildPaginatedResponse } from "../../utils/pagination";
-import { relativeUploadPath } from "../../middleware/upload";
+import { uploadFile } from "../../middleware/upload";
 
 export async function listProjectsHandler(req: Request, res: Response) {
   const params = parsePagination(req.query, 2);
@@ -45,7 +45,7 @@ export async function createProjectHandler(req: Request, res: Response) {
 
   const created = await projectService.createProject({
     ...input,
-    image: imageFile ? relativeUploadPath(imageFile) : undefined,
+    image: imageFile ? await uploadFile(imageFile) : undefined,
     userProfileId,
   });
   res.status(201).json({ data: created });
@@ -58,7 +58,7 @@ export async function updateProjectHandler(req: Request, res: Response) {
 
   const updated = await projectService.updateProject(id, {
     ...input,
-    ...(imageFile ? { image: relativeUploadPath(imageFile) } : {}),
+    ...(imageFile ? { image: await uploadFile(imageFile) } : {}),
   });
   res.json({ data: updated });
 }

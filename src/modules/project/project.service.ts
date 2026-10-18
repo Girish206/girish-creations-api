@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../utils/httpError";
+import { deleteUploadedFile } from "../../middleware/upload";
 
 export interface ProjectListParams {
   skip: number;
@@ -54,9 +55,9 @@ export async function createProject(input: ProjectInput) {
 }
 
 export async function updateProject(id: bigint, input: Partial<Omit<ProjectInput, "userProfileId">>) {
-  await getProjectById(id);
+  const existing = await getProjectById(id);
 
-  return prisma.projectDetails.update({
+  const updated = await prisma.projectDetails.update({
     where: { id },
     data: {
       ...input,
@@ -64,9 +65,14 @@ export async function updateProject(id: bigint, input: Partial<Omit<ProjectInput
       endDate: input.endDate !== undefined ? (input.endDate ? new Date(input.endDate) : null) : undefined,
     },
   });
+  if (input.image !== undefined && input.image !== existing.image) {
+    await deleteUploadedFile(existing.image);
+  }
+  return updated;
 }
 
 export async function deleteProject(id: bigint) {
-  await getProjectById(id);
+  const existing = await getProjectById(id);
   await prisma.projectDetails.delete({ where: { id } });
+  await deleteUploadedFile(existing.image);
 }
