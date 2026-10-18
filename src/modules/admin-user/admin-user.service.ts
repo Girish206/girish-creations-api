@@ -47,6 +47,37 @@ function toDto<T extends { passwordHash: string | null; isOwner: boolean; isSupe
 export interface ActingAdmin {
   id: bigint;
   isOwner: boolean;
+  isSuperAdmin: boolean;
+  hasExpensesAccess: boolean;
+  hasSavingsAccess: boolean;
+}
+
+// A member without super admin may only add people for the Money Hub: no
+// portfolio access, no super admin, and at most the expense/savings access
+// they have themselves.
+function assertMemberGrant(
+  actor: ActingAdmin,
+  flags: { hasPortfolioAccess?: boolean; hasExpensesAccess?: boolean; hasSavingsAccess?: boolean; isSuperAdmin?: boolean },
+) {
+  if (actor.isSuperAdmin) return;
+  if (flags.hasPortfolioAccess || flags.isSuperAdmin) {
+    throw ForbiddenError("Only super admins can grant portfolio or super admin access");
+  }
+  if ((flags.hasExpensesAccess && !actor.hasExpensesAccess) || (flags.hasSavingsAccess && !actor.hasSavingsAccess)) {
+    throw ForbiddenError("You can only grant access you have yourself");
+  }
+}
+
+// Super admins see every account; anyone else only the people they added.
+async function findManageable(id: bigint, actor: ActingAdmin) {
+  const existing = await prisma.adminUser.findUnique({
+    where: { id },
+    include: { _count: { select: linkedRecordCounts } },
+  });
+  if (!existing || (!actor.isSuperAdmin && existing.createdByAdminUserId !== actor.id)) {
+    throw NotFoundError("Admin user not found");
+  }
+  return existing;
 }
 
 // Only the owner hands out super admin, so a super admin can't promote
@@ -57,8 +88,9 @@ function assertCanSetSuperAdmin(actor: ActingAdmin, value: boolean | undefined) 
   }
 }
 
-export async function listAdminUsers() {
+export async function listAdminUsers(actor: ActingAdmin) {
   const rows = await prisma.adminUser.findMany({
+    where: actor.isSuperAdmin ? undefined : { createdByAdminUserId: actor.id },
     select: { ...rawSelectFields, _count: { select: linkedRecordCounts } },
     orderBy: { createdAt: "asc" },
   });
@@ -97,6 +129,7 @@ export interface CreateAdminUserInput {
 }
 
 export async function createAdminUser(input: CreateAdminUserInput, actor: ActingAdmin) {
+  assertMemberGrant(actor, input);
   assertCanSetSuperAdmin(actor, input.isSuperAdmin ? true : undefined);
   if ((input.email && !input.password) || (!input.email && input.password)) {
     throw BadRequestError("Provide both an email and a password to grant login access, or neither for a guest member");
@@ -125,6 +158,7 @@ export async function createAdminUser(input: CreateAdminUserInput, actor: Acting
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
       isSuperAdmin: input.isSuperAdmin ?? false,
+      createdByAdminUserId: actor.id,
     },
     select: rawSelectFields,
   });
@@ -148,10 +182,8 @@ export interface UpdateAdminUserInput {
 }
 
 export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, actor: ActingAdmin) {
-  const existing = await prisma.adminUser.findUnique({ where: { id } });
-  if (!existing) {
-    throw NotFoundError("Admin user not found");
-  }
+  const existing = await findManageable(id, actor);
+  assertMemberGrant(actor, input);
   // Changing the owner's email or password would hand over the account.
   if (existing.isOwner && !actor.isOwner) {
     throw ForbiddenError("Only the owner can edit the owner account");
@@ -206,14 +238,8 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, a
   return toDto(updated);
 }
 
-export async function deleteAdminUser(id: bigint, permanent = false) {
-  const existing = await prisma.adminUser.findUnique({
-    where: { id },
-    include: { _count: { select: linkedRecordCounts } },
-  });
-  if (!existing) {
-    throw NotFoundError("Admin user not found");
-  }
+export async function deleteAdminUser(id: bigint, actor: ActingAdmin, permanent = false) {
+  const existing = await findManageable(id, actor);
   if (existing.isOwner) {
     throw BadRequestError("The owner account can't be deactivated or deleted");
   }

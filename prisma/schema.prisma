@@ -190,6 +190,9 @@ model AdminUser {
   // and savings, and any portfolio via the portfolio picker) and manage
   // accounts. The owner always counts as one; only the owner grants it.
   isSuperAdmin       Boolean  @default(false) @map("is_super_admin")
+  // Who added this person. A member without super admin manages only the
+  // people they added themselves (Money Hub → Members).
+  createdByAdminUserId BigInt? @map("created_by_admin_user_id")
   isActive           Boolean  @default(true) @map("is_active")
   hasPortfolioAccess Boolean  @default(true) @map("has_portfolio_access")
   // Independent per-section access within the expense-tracker module —

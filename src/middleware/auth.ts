@@ -55,6 +55,17 @@ export function isSuperAdmin(admin: AdminTokenPayload | undefined): boolean {
   return Boolean(admin?.isSuperAdmin || admin?.isOwner);
 }
 
+// Must run after requireAdminAuth. Super admins manage every account; other
+// Money Hub members may add and manage people of their own for expenses and
+// savings (limits enforced in admin-user.service.ts).
+export function requireAccountManager(req: Request, _res: Response, next: NextFunction) {
+  const admin = req.admin;
+  if (!isSuperAdmin(admin) && !admin?.hasExpensesAccess && !admin?.hasSavingsAccess) {
+    throw ForbiddenError("No access to manage members");
+  }
+  next();
+}
+
 // Must run after requireAdminAuth.
 export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
   if (!isSuperAdmin(req.admin)) {

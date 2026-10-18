@@ -2,9 +2,10 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import * as adminUserService from "./admin-user.service";
 import { parseId } from "../../utils/parseId";
+import { isSuperAdmin } from "../../middleware/auth";
 
-export async function listAdminUsersHandler(_req: Request, res: Response) {
-  const items = await adminUserService.listAdminUsers();
+export async function listAdminUsersHandler(req: Request, res: Response) {
+  const items = await adminUserService.listAdminUsers(actingAdmin(req));
   res.json({ data: items });
 }
 
@@ -31,7 +32,14 @@ const createSchema = z.object({
 // Who is making an account change — the service limits what a non-owner
 // super admin may do.
 function actingAdmin(req: Request): adminUserService.ActingAdmin {
-  return { id: BigInt(req.admin!.sub), isOwner: req.admin!.isOwner };
+  const admin = req.admin!;
+  return {
+    id: BigInt(admin.sub),
+    isOwner: admin.isOwner,
+    isSuperAdmin: isSuperAdmin(admin),
+    hasExpensesAccess: admin.hasExpensesAccess,
+    hasSavingsAccess: admin.hasSavingsAccess,
+  };
 }
 
 export async function createAdminUserHandler(req: Request, res: Response) {
@@ -64,6 +72,6 @@ export async function deleteAdminUserHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   // ?permanent=true removes the row (only allowed with no linked records);
   // the default just deactivates.
-  await adminUserService.deleteAdminUser(id, req.query.permanent === "true");
+  await adminUserService.deleteAdminUser(id, actingAdmin(req), req.query.permanent === "true");
   res.status(204).send();
 }
