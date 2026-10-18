@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as blogService from "./blog.service";
-import { getProfileId } from "../profile/profile.service";
+import { scopedProfileId } from "../../middleware/portfolioScope";
 import { parseId } from "../../utils/parseId";
 import { parsePagination, paginationSkipTake, buildPaginatedResponse } from "../../utils/pagination";
 import { generateUniqueSlug } from "../../utils/slugify";
@@ -9,12 +9,12 @@ import { ConflictError } from "../../utils/httpError";
 
 export async function listBlogHandler(req: Request, res: Response) {
   const params = parsePagination(req.query, 10);
-  const { items, total } = await blogService.listBlogPosts(paginationSkipTake(params));
+  const { items, total } = await blogService.listBlogPosts(scopedProfileId(req), paginationSkipTake(params));
   res.json({ data: buildPaginatedResponse(items, total, params) });
 }
 
 export async function getBlogHandler(req: Request, res: Response) {
-  const post = await blogService.getBlogPostBySlug(req.params.slug as string);
+  const post = await blogService.getBlogPostBySlug(req.params.slug as string, scopedProfileId(req));
   res.json({ data: post });
 }
 
@@ -27,7 +27,7 @@ const blogCreateSchema = z.object({
 
 export async function createBlogHandler(req: Request, res: Response) {
   const input = blogCreateSchema.parse(req.body);
-  const userProfileId = await getProfileId();
+  const userProfileId = scopedProfileId(req);
 
   const providedSlug = input.slug?.trim();
   let slug: string;
@@ -60,7 +60,7 @@ const blogUpdateSchema = z.object({
 export async function updateBlogHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   const input = blogUpdateSchema.parse(req.body);
-  const existing = await blogService.getBlogPostById(id);
+  const existing = await blogService.getBlogPostById(id, scopedProfileId(req));
 
   // Only touch the slug when the request body explicitly includes a "slug"
   // key: an empty string means "regenerate from the title", a non-empty
@@ -80,7 +80,7 @@ export async function updateBlogHandler(req: Request, res: Response) {
     }
   }
 
-  const updated = await blogService.updateBlogPost(id, {
+  const updated = await blogService.updateBlogPost(id, scopedProfileId(req), {
     ...input,
     ...(slug !== undefined ? { slug } : {}),
   });
@@ -89,6 +89,6 @@ export async function updateBlogHandler(req: Request, res: Response) {
 
 export async function deleteBlogHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  await blogService.deleteBlogPost(id);
+  await blogService.deleteBlogPost(id, scopedProfileId(req));
   res.status(204).send();
 }

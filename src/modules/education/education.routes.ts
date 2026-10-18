@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import {
   createEducationHandler,
   deleteEducationHandler,
@@ -8,17 +7,12 @@ import {
   updateEducationHandler,
 } from "./education.controller";
 
-const requirePortfolioAccess = requireModuleAccess("portfolio");
-
 export const educationPublicRouter = Router();
 educationPublicRouter.get("/", asyncHandler(listEducationHandler));
 
+// Mounted behind requireAdminAuth + portfolio access + resolveOwnPortfolio
+// (routes/index.ts), so every request is scoped to the signed-in account's portfolio.
 export const educationAdminRouter = Router();
-educationAdminRouter.post("/", requireAdminAuth, requirePortfolioAccess, asyncHandler(createEducationHandler));
-educationAdminRouter.put("/:id", requireAdminAuth, requirePortfolioAccess, asyncHandler(updateEducationHandler));
-educationAdminRouter.delete(
-  "/:id",
-  requireAdminAuth,
-  requirePortfolioAccess,
-  asyncHandler(deleteEducationHandler),
-);
+educationAdminRouter.post("/", asyncHandler(createEducationHandler));
+educationAdminRouter.put("/:id", asyncHandler(updateEducationHandler));
+educationAdminRouter.delete("/:id", asyncHandler(deleteEducationHandler));

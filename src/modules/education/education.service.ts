@@ -1,8 +1,8 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../utils/httpError";
 
-export async function listEducation() {
-  return prisma.educationDetails.findMany({ orderBy: { startDate: "desc" } });
+export async function listEducation(userProfileId: bigint) {
+  return prisma.educationDetails.findMany({ where: { userProfileId }, orderBy: { startDate: "desc" } });
 }
 
 export interface EducationInput {
@@ -29,8 +29,8 @@ export async function createEducation(input: EducationInput) {
   });
 }
 
-export async function updateEducation(id: bigint, input: Partial<EducationInput>) {
-  const existing = await prisma.educationDetails.findUnique({ where: { id } });
+export async function updateEducation(id: bigint, userProfileId: bigint, input: Partial<EducationInput>) {
+  const existing = await prisma.educationDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Education entry not found");
   }
@@ -46,8 +46,8 @@ export async function updateEducation(id: bigint, input: Partial<EducationInput>
   });
 }
 
-export async function deleteEducation(id: bigint) {
-  const existing = await prisma.educationDetails.findUnique({ where: { id } });
+export async function deleteEducation(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.educationDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Education entry not found");
   }

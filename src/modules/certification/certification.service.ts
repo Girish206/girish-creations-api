@@ -1,8 +1,8 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../utils/httpError";
 
-export async function listCertification() {
-  return prisma.certificationDetails.findMany({ orderBy: { issueDate: "desc" } });
+export async function listCertification(userProfileId: bigint) {
+  return prisma.certificationDetails.findMany({ where: { userProfileId }, orderBy: { issueDate: "desc" } });
 }
 
 export interface CertificationInput {
@@ -29,8 +29,8 @@ export async function createCertification(input: CertificationInput) {
   });
 }
 
-export async function updateCertification(id: bigint, input: Partial<CertificationInput>) {
-  const existing = await prisma.certificationDetails.findUnique({ where: { id } });
+export async function updateCertification(id: bigint, userProfileId: bigint, input: Partial<CertificationInput>) {
+  const existing = await prisma.certificationDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Certification entry not found");
   }
@@ -46,8 +46,8 @@ export async function updateCertification(id: bigint, input: Partial<Certificati
   });
 }
 
-export async function deleteCertification(id: bigint) {
-  const existing = await prisma.certificationDetails.findUnique({ where: { id } });
+export async function deleteCertification(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.certificationDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Certification entry not found");
   }

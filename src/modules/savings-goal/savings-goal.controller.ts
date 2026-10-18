@@ -1,10 +1,11 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { isSuperAdmin } from "../../middleware/auth";
 import * as savingsGoalService from "./savings-goal.service";
 import { parseId } from "../../utils/parseId";
 
 function requestingAdmin(req: Request) {
-  return { id: BigInt(req.admin!.sub), isOwner: req.admin!.isOwner };
+  return { id: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) };
 }
 
 export async function listSavingsGoalsHandler(req: Request, res: Response) {

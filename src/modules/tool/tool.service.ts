@@ -1,8 +1,8 @@
 import { prisma } from "../../lib/prisma";
 import { NotFoundError } from "../../utils/httpError";
 
-export async function listTool() {
-  return prisma.tool.findMany();
+export async function listTool(userProfileId: bigint) {
+  return prisma.tool.findMany({ where: { userProfileId } });
 }
 
 export interface ToolInput {
@@ -19,8 +19,8 @@ export async function createTool(input: ToolInput) {
   });
 }
 
-export async function updateTool(id: bigint, input: Partial<ToolInput>) {
-  const existing = await prisma.tool.findUnique({ where: { id } });
+export async function updateTool(id: bigint, userProfileId: bigint, input: Partial<ToolInput>) {
+  const existing = await prisma.tool.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Tool not found");
   }
@@ -31,8 +31,8 @@ export async function updateTool(id: bigint, input: Partial<ToolInput>) {
   });
 }
 
-export async function deleteTool(id: bigint) {
-  const existing = await prisma.tool.findUnique({ where: { id } });
+export async function deleteTool(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.tool.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Tool not found");
   }

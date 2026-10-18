@@ -1,11 +1,11 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as experienceService from "./experience.service";
-import { getProfileId } from "../profile/profile.service";
+import { scopedProfileId } from "../../middleware/portfolioScope";
 import { parseId } from "../../utils/parseId";
 
-export async function listExperienceHandler(_req: Request, res: Response) {
-  const items = await experienceService.listExperience();
+export async function listExperienceHandler(req: Request, res: Response) {
+  const items = await experienceService.listExperience(scopedProfileId(req));
   res.json({ data: items });
 }
 
@@ -20,7 +20,7 @@ const experienceSchema = z.object({
 
 export async function createExperienceHandler(req: Request, res: Response) {
   const input = experienceSchema.parse(req.body);
-  const userProfileId = await getProfileId();
+  const userProfileId = scopedProfileId(req);
   const created = await experienceService.createExperience({ ...input, userProfileId });
   res.status(201).json({ data: created });
 }
@@ -28,12 +28,12 @@ export async function createExperienceHandler(req: Request, res: Response) {
 export async function updateExperienceHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   const input = experienceSchema.partial().parse(req.body);
-  const updated = await experienceService.updateExperience(id, input);
+  const updated = await experienceService.updateExperience(id, scopedProfileId(req), input);
   res.json({ data: updated });
 }
 
 export async function deleteExperienceHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  await experienceService.deleteExperience(id);
+  await experienceService.deleteExperience(id, scopedProfileId(req));
   res.status(204).send();
 }

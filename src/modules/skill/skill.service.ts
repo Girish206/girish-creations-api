@@ -9,9 +9,12 @@ export interface ListSkillOptions {
 // Ported from the old Django view: optionally filter by proficiency level(s),
 // then optionally take a random sample of `random` rows from the (filtered)
 // set via a shuffle + slice, mirroring random.shuffle(list)[:n].
-export async function listSkill(options: ListSkillOptions = {}) {
+export async function listSkill(userProfileId: bigint, options: ListSkillOptions = {}) {
   const rows = await prisma.skill.findMany({
-    where: options.levels && options.levels.length > 0 ? { proficiencyLevel: { in: options.levels } } : undefined,
+    where: {
+      userProfileId,
+      ...(options.levels && options.levels.length > 0 ? { proficiencyLevel: { in: options.levels } } : {}),
+    },
   });
 
   if (options.random === undefined) {
@@ -38,8 +41,8 @@ export async function createSkill(input: SkillInput) {
   });
 }
 
-export async function updateSkill(id: bigint, input: Partial<SkillInput>) {
-  const existing = await prisma.skill.findUnique({ where: { id } });
+export async function updateSkill(id: bigint, userProfileId: bigint, input: Partial<SkillInput>) {
+  const existing = await prisma.skill.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Skill not found");
   }
@@ -50,8 +53,8 @@ export async function updateSkill(id: bigint, input: Partial<SkillInput>) {
   });
 }
 
-export async function deleteSkill(id: bigint) {
-  const existing = await prisma.skill.findUnique({ where: { id } });
+export async function deleteSkill(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.skill.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Skill not found");
   }

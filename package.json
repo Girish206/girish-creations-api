@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "postinstall": "prisma generate",
     "import:mysql": "tsx prisma/import-mysql.ts",
-    "seed:categories": "tsx prisma/seed-expense-categories.ts"
+    "seed:categories": "tsx prisma/seed-expense-categories.ts",
+    "migrate:link-profiles": "tsx prisma/link-profiles.ts"
   },
   "keywords": [],
   "author": "",

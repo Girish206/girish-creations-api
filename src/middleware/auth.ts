@@ -51,10 +51,14 @@ export function requireAnyExpenseAccess(req: Request, _res: Response, next: Next
   next();
 }
 
+export function isSuperAdmin(admin: AdminTokenPayload | undefined): boolean {
+  return Boolean(admin?.isSuperAdmin || admin?.isOwner);
+}
+
 // Must run after requireAdminAuth.
-export function requireOwner(req: Request, _res: Response, next: NextFunction) {
-  if (!req.admin?.isOwner) {
-    throw ForbiddenError("Owner access required");
+export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
+  if (!isSuperAdmin(req.admin)) {
+    throw ForbiddenError("Super admin access required");
   }
   next();
 }

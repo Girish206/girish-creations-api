@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import {
   createCertificationHandler,
   deleteCertificationHandler,
@@ -8,27 +7,12 @@ import {
   updateCertificationHandler,
 } from "./certification.controller";
 
-const requirePortfolioAccess = requireModuleAccess("portfolio");
-
 export const certificationPublicRouter = Router();
 certificationPublicRouter.get("/", asyncHandler(listCertificationHandler));
 
+// Mounted behind requireAdminAuth + portfolio access + resolveOwnPortfolio
+// (routes/index.ts), so every request is scoped to the signed-in account's portfolio.
 export const certificationAdminRouter = Router();
-certificationAdminRouter.post(
-  "/",
-  requireAdminAuth,
-  requirePortfolioAccess,
-  asyncHandler(createCertificationHandler),
-);
-certificationAdminRouter.put(
-  "/:id",
-  requireAdminAuth,
-  requirePortfolioAccess,
-  asyncHandler(updateCertificationHandler),
-);
-certificationAdminRouter.delete(
-  "/:id",
-  requireAdminAuth,
-  requirePortfolioAccess,
-  asyncHandler(deleteCertificationHandler),
-);
+certificationAdminRouter.post("/", asyncHandler(createCertificationHandler));
+certificationAdminRouter.put("/:id", asyncHandler(updateCertificationHandler));
+certificationAdminRouter.delete("/:id", asyncHandler(deleteCertificationHandler));

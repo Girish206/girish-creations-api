@@ -16,8 +16,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// One portfolio per admin account: each login with portfolio access edits
+// its own profile, and visitors reach it at /<username> on the public site.
 model UserProfile {
   id              BigInt  @id @default(0) @map("_id")
+  // URL handle for the public portfolio (/<username>). Optional (as is
+  // adminUserId) only because the original single profile predates it —
+  // prisma/link-profiles.ts backfills both, and every profile created since
+  // gets them (profile.service.ts getOrCreateOwnProfile).
+  username        String? @unique
   fullName        String  @map("full_name")
   email           String
   bio             String?
@@ -32,6 +39,12 @@ model UserProfile {
   instaId         String? @map("insta_id")
   linkedinId      String? @map("linkedin_id")
   twitterId       String? @map("twitter_id")
+  // "/api/files/<id>" path of an uploaded PDF, or a static path for the
+  // original site's bundled résumé.
+  resume          String?
+
+  adminUserId BigInt?    @unique @map("admin_user_id")
+  adminUser   AdminUser? @relation(fields: [adminUserId], references: [id])
 
   experienceDetails ExperienceDetails[]
   educationDetails  EducationDetails[]
@@ -173,6 +186,10 @@ model AdminUser {
   passwordHash       String?  @map("password_hash")
   name               String?
   isOwner            Boolean  @default(false) @map("is_owner")
+  // Super admins see every account's data in the admin panel (all expenses
+  // and savings, and any portfolio via the portfolio picker) and manage
+  // accounts. The owner always counts as one; only the owner grants it.
+  isSuperAdmin       Boolean  @default(false) @map("is_super_admin")
   isActive           Boolean  @default(true) @map("is_active")
   hasPortfolioAccess Boolean  @default(true) @map("has_portfolio_access")
   // Independent per-section access within the expense-tracker module —
@@ -181,6 +198,7 @@ model AdminUser {
   hasSavingsAccess   Boolean  @default(false) @map("has_savings_access")
   createdAt          DateTime @default(now()) @map("created_at")
 
+  portfolioProfile       UserProfile?
   expensesPaid           Expense[]                 @relation("ExpensePaidBy")
   savingsContributions   SavingsContribution[]     @relation("SavingsContributionBy")
   savingsAccountsHeld    SavingsGoal[]             @relation("SavingsAccountHolder")

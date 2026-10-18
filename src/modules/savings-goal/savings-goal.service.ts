@@ -13,7 +13,7 @@ const includeRelations = {
 
 export interface RequestingAdmin {
   id: bigint;
-  isOwner: boolean;
+  isSuperAdmin: boolean;
 }
 
 // Private by default (visible only to whoever created it, and whoever
@@ -23,7 +23,7 @@ export interface RequestingAdmin {
 // to everyone rather than becoming inaccessible to their actual users.
 export async function listSavingsGoals(admin: RequestingAdmin) {
   return prisma.savingsGoal.findMany({
-    where: admin.isOwner
+    where: admin.isSuperAdmin
       ? undefined
       : {
           OR: [
@@ -43,7 +43,7 @@ export async function listSavingsGoals(admin: RequestingAdmin) {
 // direct mutations (edit/delete/contribute) respect it too, not just what
 // the list happens to show.
 async function assertGoalAccess(goalId: bigint, admin: RequestingAdmin) {
-  if (admin.isOwner) return;
+  if (admin.isSuperAdmin) return;
   const goal = await prisma.savingsGoal.findUnique({
     where: { id: goalId },
     include: { members: true },

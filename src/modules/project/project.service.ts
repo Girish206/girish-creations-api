@@ -7,21 +7,21 @@ export interface ProjectListParams {
   take: number;
 }
 
-export async function listProjects({ skip, take }: ProjectListParams) {
+export async function listProjects(userProfileId: bigint, { skip, take }: ProjectListParams) {
   const [items, total] = await Promise.all([
-    prisma.projectDetails.findMany({ orderBy: { startDate: "desc" }, skip, take }),
-    prisma.projectDetails.count(),
+    prisma.projectDetails.findMany({ where: { userProfileId }, orderBy: { startDate: "desc" }, skip, take }),
+    prisma.projectDetails.count({ where: { userProfileId } }),
   ]);
   return { items, total };
 }
 
-export async function randomProjects(count: number) {
-  const all = await prisma.projectDetails.findMany();
+export async function randomProjects(userProfileId: bigint, count: number) {
+  const all = await prisma.projectDetails.findMany({ where: { userProfileId } });
   return all.sort(() => Math.random() - 0.5).slice(0, count);
 }
 
-export async function getProjectById(id: bigint) {
-  const project = await prisma.projectDetails.findUnique({ where: { id } });
+export async function getProjectById(id: bigint, userProfileId: bigint) {
+  const project = await prisma.projectDetails.findFirst({ where: { id, userProfileId } });
   if (!project) {
     throw NotFoundError("Project not found");
   }
@@ -54,8 +54,12 @@ export async function createProject(input: ProjectInput) {
   });
 }
 
-export async function updateProject(id: bigint, input: Partial<Omit<ProjectInput, "userProfileId">>) {
-  const existing = await getProjectById(id);
+export async function updateProject(
+  id: bigint,
+  userProfileId: bigint,
+  input: Partial<Omit<ProjectInput, "userProfileId">>,
+) {
+  const existing = await getProjectById(id, userProfileId);
 
   const updated = await prisma.projectDetails.update({
     where: { id },
@@ -71,8 +75,8 @@ export async function updateProject(id: bigint, input: Partial<Omit<ProjectInput
   return updated;
 }
 
-export async function deleteProject(id: bigint) {
-  const existing = await getProjectById(id);
+export async function deleteProject(id: bigint, userProfileId: bigint) {
+  const existing = await getProjectById(id, userProfileId);
   await prisma.projectDetails.delete({ where: { id } });
   await deleteUploadedFile(existing.image);
 }

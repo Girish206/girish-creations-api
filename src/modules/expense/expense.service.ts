@@ -13,14 +13,14 @@ const includeRelations = {
 
 export interface RequestingAdmin {
   id: bigint;
-  isOwner: boolean;
+  isSuperAdmin: boolean;
 }
 
 // Private by default (only who paid it can see it) — split with others and
-// it becomes visible to everyone in that split too. Owner sees everything.
+// it becomes visible to everyone in that split too. Super admins see everything.
 export async function listExpenses(admin: RequestingAdmin) {
   return prisma.expense.findMany({
-    where: admin.isOwner
+    where: admin.isSuperAdmin
       ? undefined
       : { OR: [{ paidByAdminUserId: admin.id }, { splitParticipants: { some: { adminUserId: admin.id } } }] },
     include: includeRelations,
@@ -29,7 +29,7 @@ export async function listExpenses(admin: RequestingAdmin) {
 }
 
 async function assertExpenseAccess(expenseId: bigint, admin: RequestingAdmin) {
-  if (admin.isOwner) return;
+  if (admin.isSuperAdmin) return;
   const expense = await prisma.expense.findUnique({
     where: { id: expenseId },
     include: { splitParticipants: true },

@@ -25,11 +25,18 @@ const createSchema = z.object({
   hasPortfolioAccess: z.boolean().default(false),
   hasExpensesAccess: z.boolean().default(false),
   hasSavingsAccess: z.boolean().default(false),
+  isSuperAdmin: z.boolean().default(false),
 });
+
+// Who is making an account change — the service limits what a non-owner
+// super admin may do.
+function actingAdmin(req: Request): adminUserService.ActingAdmin {
+  return { id: BigInt(req.admin!.sub), isOwner: req.admin!.isOwner };
+}
 
 export async function createAdminUserHandler(req: Request, res: Response) {
   const input = createSchema.parse(req.body);
-  const created = await adminUserService.createAdminUser(input);
+  const created = await adminUserService.createAdminUser(input, actingAdmin(req));
   res.status(201).json({ data: created });
 }
 
@@ -43,12 +50,13 @@ const updateSchema = z.object({
   hasPortfolioAccess: z.boolean().optional(),
   hasExpensesAccess: z.boolean().optional(),
   hasSavingsAccess: z.boolean().optional(),
+  isSuperAdmin: z.boolean().optional(),
 });
 
 export async function updateAdminUserHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   const input = updateSchema.parse(req.body);
-  const updated = await adminUserService.updateAdminUser(id, input);
+  const updated = await adminUserService.updateAdminUser(id, input, actingAdmin(req));
   res.json({ data: updated });
 }
 

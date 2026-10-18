@@ -1,12 +1,13 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
-import { BadRequestError, ConflictError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 
 const rawSelectFields = {
   id: true,
   email: true,
   name: true,
   isOwner: true,
+  isSuperAdmin: true,
   isActive: true,
   hasPortfolioAccess: true,
   hasExpensesAccess: true,
@@ -37,9 +38,23 @@ function totalLinked(counts: LinkedCounts) {
 // passwordHash itself is never sent to the client — only whether one is set
 // ("hasLogin"), which is what the UI needs to tell a login-enabled member
 // apart from a guest that only exists to be picked in split/holder lists.
-function toDto<T extends { passwordHash: string | null }>(row: T) {
+function toDto<T extends { passwordHash: string | null; isOwner: boolean; isSuperAdmin: boolean }>(row: T) {
   const { passwordHash, ...rest } = row;
-  return { ...rest, hasLogin: passwordHash !== null };
+  // The owner is always a super admin, whatever the stored flag says.
+  return { ...rest, isSuperAdmin: row.isOwner || row.isSuperAdmin, hasLogin: passwordHash !== null };
+}
+
+export interface ActingAdmin {
+  id: bigint;
+  isOwner: boolean;
+}
+
+// Only the owner hands out super admin, so a super admin can't promote
+// others (or themselves back after a demotion).
+function assertCanSetSuperAdmin(actor: ActingAdmin, value: boolean | undefined) {
+  if (value !== undefined && !actor.isOwner) {
+    throw ForbiddenError("Only the owner can change who is a super admin");
+  }
 }
 
 export async function listAdminUsers() {
@@ -78,9 +93,11 @@ export interface CreateAdminUserInput {
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
+  isSuperAdmin?: boolean;
 }
 
-export async function createAdminUser(input: CreateAdminUserInput) {
+export async function createAdminUser(input: CreateAdminUserInput, actor: ActingAdmin) {
+  assertCanSetSuperAdmin(actor, input.isSuperAdmin ? true : undefined);
   if ((input.email && !input.password) || (!input.email && input.password)) {
     throw BadRequestError("Provide both an email and a password to grant login access, or neither for a guest member");
   }
@@ -107,6 +124,7 @@ export async function createAdminUser(input: CreateAdminUserInput) {
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
+      isSuperAdmin: input.isSuperAdmin ?? false,
     },
     select: rawSelectFields,
   });
@@ -126,12 +144,25 @@ export interface UpdateAdminUserInput {
   hasPortfolioAccess?: boolean;
   hasExpensesAccess?: boolean;
   hasSavingsAccess?: boolean;
+  isSuperAdmin?: boolean;
 }
 
-export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
+export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, actor: ActingAdmin) {
   const existing = await prisma.adminUser.findUnique({ where: { id } });
   if (!existing) {
     throw NotFoundError("Admin user not found");
+  }
+  // Changing the owner's email or password would hand over the account.
+  if (existing.isOwner && !actor.isOwner) {
+    throw ForbiddenError("Only the owner can edit the owner account");
+  }
+  const superAdminChange =
+    input.isSuperAdmin !== undefined && input.isSuperAdmin !== (existing.isOwner || existing.isSuperAdmin)
+      ? input.isSuperAdmin
+      : undefined;
+  assertCanSetSuperAdmin(actor, superAdminChange);
+  if (existing.isOwner && superAdminChange === false) {
+    throw BadRequestError("The owner is always a super admin");
   }
 
   if (existing.isOwner && (input.isActive === false || input.removeLogin)) {
@@ -168,6 +199,7 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
+      isSuperAdmin: existing.isOwner ? undefined : superAdminChange,
     },
     select: rawSelectFields,
   });
@@ -186,8 +218,11 @@ export async function deleteAdminUser(id: bigint, permanent = false) {
     throw BadRequestError("The owner account can't be deactivated or deleted");
   }
   if (permanent) {
-    if (totalLinked(existing._count) > 0) {
-      throw ConflictError("This person has expenses, savings or other records, so they can only be deactivated");
+    const hasPortfolio = (await prisma.userProfile.count({ where: { adminUserId: id } })) > 0;
+    if (totalLinked(existing._count) > 0 || hasPortfolio) {
+      throw ConflictError(
+        "This person has a portfolio, expenses, savings or other records, so they can only be deactivated",
+      );
     }
     await prisma.adminUser.delete({ where: { id } });
     return;

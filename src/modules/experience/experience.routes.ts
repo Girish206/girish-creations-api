@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import {
   createExperienceHandler,
   deleteExperienceHandler,
@@ -8,17 +7,12 @@ import {
   updateExperienceHandler,
 } from "./experience.controller";
 
-const requirePortfolioAccess = requireModuleAccess("portfolio");
-
 export const experiencePublicRouter = Router();
 experiencePublicRouter.get("/", asyncHandler(listExperienceHandler));
 
+// Mounted behind requireAdminAuth + portfolio access + resolveOwnPortfolio
+// (routes/index.ts), so every request is scoped to the signed-in account's portfolio.
 export const experienceAdminRouter = Router();
-experienceAdminRouter.post("/", requireAdminAuth, requirePortfolioAccess, asyncHandler(createExperienceHandler));
-experienceAdminRouter.put("/:id", requireAdminAuth, requirePortfolioAccess, asyncHandler(updateExperienceHandler));
-experienceAdminRouter.delete(
-  "/:id",
-  requireAdminAuth,
-  requirePortfolioAccess,
-  asyncHandler(deleteExperienceHandler),
-);
+experienceAdminRouter.post("/", asyncHandler(createExperienceHandler));
+experienceAdminRouter.put("/:id", asyncHandler(updateExperienceHandler));
+experienceAdminRouter.delete("/:id", asyncHandler(deleteExperienceHandler));

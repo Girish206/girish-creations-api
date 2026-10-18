@@ -18,8 +18,8 @@ export async function recomputeTotalExperience(userProfileId: bigint) {
   });
 }
 
-export async function listExperience() {
-  return prisma.experienceDetails.findMany({ orderBy: { startDate: "desc" } });
+export async function listExperience(userProfileId: bigint) {
+  return prisma.experienceDetails.findMany({ where: { userProfileId }, orderBy: { startDate: "desc" } });
 }
 
 export interface ExperienceInput {
@@ -48,8 +48,8 @@ export async function createExperience(input: ExperienceInput) {
   return created;
 }
 
-export async function updateExperience(id: bigint, input: Partial<ExperienceInput>) {
-  const existing = await prisma.experienceDetails.findUnique({ where: { id } });
+export async function updateExperience(id: bigint, userProfileId: bigint, input: Partial<ExperienceInput>) {
+  const existing = await prisma.experienceDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Experience entry not found");
   }
@@ -66,8 +66,8 @@ export async function updateExperience(id: bigint, input: Partial<ExperienceInpu
   return updated;
 }
 
-export async function deleteExperience(id: bigint) {
-  const existing = await prisma.experienceDetails.findUnique({ where: { id } });
+export async function deleteExperience(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.experienceDetails.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Experience entry not found");
   }

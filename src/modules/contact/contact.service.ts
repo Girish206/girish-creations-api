@@ -6,10 +6,10 @@ export interface ContactListParams {
   take: number;
 }
 
-export async function listContactMessages({ skip, take }: ContactListParams) {
+export async function listContactMessages(userProfileId: bigint, { skip, take }: ContactListParams) {
   const [items, total] = await Promise.all([
-    prisma.contactMessage.findMany({ orderBy: { sentAt: "desc" }, skip, take }),
-    prisma.contactMessage.count(),
+    prisma.contactMessage.findMany({ where: { userProfileId }, orderBy: { sentAt: "desc" }, skip, take }),
+    prisma.contactMessage.count({ where: { userProfileId } }),
   ]);
   return { items, total };
 }
@@ -19,7 +19,7 @@ export interface ContactInput {
   email: string;
   subject: string;
   message: string;
-  userProfileId: bigint | null;
+  userProfileId: bigint;
 }
 
 export async function createContactMessage(input: ContactInput) {
@@ -34,8 +34,8 @@ export async function createContactMessage(input: ContactInput) {
   });
 }
 
-export async function deleteContactMessage(id: bigint) {
-  const existing = await prisma.contactMessage.findUnique({ where: { id } });
+export async function deleteContactMessage(id: bigint, userProfileId: bigint) {
+  const existing = await prisma.contactMessage.findFirst({ where: { id, userProfileId } });
   if (!existing) {
     throw NotFoundError("Contact message not found");
   }

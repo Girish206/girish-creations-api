@@ -1,7 +1,8 @@
 import { prisma } from "../../lib/prisma";
-import { NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ConflictError, NotFoundError } from "../../utils/httpError";
 import { calculateTotalExperienceYears } from "../experience/experience.utils";
 import { deleteUploadedFile } from "../../middleware/upload";
+import { slugify } from "../../utils/slugify";
 
 // Ported from main/models.py UserProfile.formatted_experience() /
 // formatted_experience_in_years().
@@ -34,27 +35,151 @@ async function withComputed<T extends { id: bigint }>(profile: T) {
   };
 }
 
-// Single-tenant site: there is only ever one UserProfile row.
-export async function getProfile() {
-  const profile = await prisma.userProfile.findFirst();
+// A portfolio is publicly visible while its account is active and still has
+// portfolio access (the original, pre-multi-portfolio profile shows up once
+// prisma/link-profiles.ts has linked it to an account).
+const visibleWhere = {
+  adminUser: { is: { isActive: true, hasPortfolioAccess: true } },
+};
+
+// Public directory of every visible portfolio, for the site's home page.
+export async function listPortfolios() {
+  const rows = await prisma.userProfile.findMany({
+    where: visibleWhere,
+    select: { id: true, username: true, fullName: true, profilePicture: true, bio: true },
+    orderBy: { id: "asc" },
+  });
+  return Promise.all(
+    rows.map(async (row) => {
+      const [headline, projectCount, totalExperience] = await Promise.all([
+        prisma.experienceDetails.findFirst({
+          where: { userProfileId: row.id },
+          orderBy: [{ startDate: "desc" }],
+          select: { jobTitle: true, companyName: true, endDate: true },
+        }),
+        prisma.projectDetails.count({ where: { userProfileId: row.id } }),
+        calculateTotalExperienceYears(row.id),
+      ]);
+      return {
+        ...row,
+        jobTitle: headline?.jobTitle ?? null,
+        companyName: headline && !headline.endDate ? headline.companyName : null,
+        projectCount,
+        formattedExperience: formatExperience(totalExperience),
+        formattedExperienceInYears: formatExperienceInYears(totalExperience),
+      };
+    }),
+  );
+}
+
+// Accounts a super admin can switch the admin portfolio pages to: every
+// login with portfolio access, with their portfolio's name and handle if
+// they have opened it yet.
+export async function listManageablePortfolios() {
+  const accounts = await prisma.adminUser.findMany({
+    where: { hasPortfolioAccess: true, passwordHash: { not: null } },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      isActive: true,
+      portfolioProfile: { select: { fullName: true, username: true, profilePicture: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  return accounts.map(({ portfolioProfile, ...account }) => ({
+    ...account,
+    fullName: portfolioProfile?.fullName ?? null,
+    username: portfolioProfile?.username ?? null,
+    profilePicture: portfolioProfile?.profilePicture ?? null,
+  }));
+}
+
+// Resolves the /<username> of a public portfolio URL to its profile id.
+export async function getVisibleProfileId(username: string): Promise<bigint> {
+  const profile = await prisma.userProfile.findFirst({
+    where: { ...visibleWhere, username: username.toLowerCase() },
+    select: { id: true },
+  });
+  if (!profile) {
+    throw NotFoundError("Portfolio not found");
+  }
+  return profile.id;
+}
+
+export async function getProfile(id: bigint) {
+  const profile = await prisma.userProfile.findUnique({ where: { id } });
   if (!profile) {
     throw NotFoundError("Profile not found");
   }
   return withComputed(profile);
 }
 
-// Every other resource (experience, education, projects, ...) FKs to the one
-// site-owner profile. Admin write endpoints for those resources use this
-// instead of requiring the caller to pass a userProfileId.
-export async function getProfileId(): Promise<bigint> {
-  const profile = await prisma.userProfile.findFirst({ select: { id: true } });
-  if (!profile) {
-    throw NotFoundError("Profile not found");
+// Top-level client routes and API/static prefixes a username would shadow,
+// since portfolios live at /<username> — plus the page names that used to be
+// top-level (/about, /blog, ...) before multi-portfolio support, so old links
+// can never land on someone else's portfolio.
+const RESERVED_USERNAMES = new Set([
+  "admin",
+  "api",
+  "assets",
+  "logo",
+  "login",
+  "logout",
+  "static",
+  "uploads",
+  "about",
+  "experience",
+  "skills",
+  "projects",
+  "services",
+  "contact",
+  "blog",
+]);
+const USERNAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
+
+async function usernameTaken(username: string, excludeId?: bigint) {
+  const existing = await prisma.userProfile.findUnique({ where: { username }, select: { id: true } });
+  return existing !== null && existing.id !== excludeId;
+}
+
+export async function uniqueUsername(base: string) {
+  const root = slugify(base).slice(0, 34).replace(/-+$/, "");
+  const start = USERNAME_PATTERN.test(root) && !RESERVED_USERNAMES.has(root) ? root : `${root || "user"}-profile`;
+  let candidate = start;
+  let suffix = 2;
+  while (await usernameTaken(candidate)) {
+    candidate = `${start}-${suffix}`;
+    suffix += 1;
   }
-  return profile.id;
+  return candidate;
+}
+
+// The portfolio an admin account edits. Created on first use, so granting
+// someone portfolio access is all it takes to give them their own page.
+export async function getOrCreateOwnProfile(adminUserId: bigint) {
+  const existing = await prisma.userProfile.findUnique({ where: { adminUserId } });
+  if (existing) {
+    return existing;
+  }
+
+  const admin = await prisma.adminUser.findUnique({ where: { id: adminUserId } });
+  if (!admin) {
+    throw NotFoundError("Admin user not found");
+  }
+  const fullName = admin.name?.trim() || admin.email?.split("@")[0] || "New member";
+  return prisma.userProfile.create({
+    data: {
+      fullName,
+      email: admin.email ?? "",
+      username: await uniqueUsername(fullName),
+      adminUserId,
+    },
+  });
 }
 
 export interface UpdateProfileInput {
+  username?: string;
   fullName?: string;
   email?: string;
   bio?: string | null;
@@ -67,23 +192,43 @@ export interface UpdateProfileInput {
   twitterId?: string | null;
   profilePicture?: string;
   signature?: string | null;
+  resume?: string | null;
 }
 
-export async function updateProfile(data: UpdateProfileInput) {
-  const existing = await prisma.userProfile.findFirst();
+export async function updateProfile(id: bigint, data: UpdateProfileInput) {
+  const existing = await prisma.userProfile.findUnique({ where: { id } });
   if (!existing) {
     throw NotFoundError("Profile not found");
   }
+
+  if (data.username !== undefined) {
+    data.username = data.username.trim().toLowerCase();
+    if (!USERNAME_PATTERN.test(data.username)) {
+      throw BadRequestError(
+        "Username must be 3–40 characters: lowercase letters, numbers and hyphens, starting and ending with a letter or number",
+      );
+    }
+    if (RESERVED_USERNAMES.has(data.username)) {
+      throw BadRequestError("That username is reserved");
+    }
+    if (await usernameTaken(data.username, id)) {
+      throw ConflictError("That username is already taken");
+    }
+  }
+
   const updated = await prisma.userProfile.update({
-    where: { id: existing.id },
+    where: { id },
     data,
   });
-  // Drop the stored images this update just replaced or removed.
+  // Drop the stored files this update just replaced or removed.
   if (data.profilePicture !== undefined && data.profilePicture !== existing.profilePicture) {
     await deleteUploadedFile(existing.profilePicture);
   }
   if (data.signature !== undefined && data.signature !== existing.signature) {
     await deleteUploadedFile(existing.signature);
+  }
+  if (data.resume !== undefined && data.resume !== existing.resume) {
+    await deleteUploadedFile(existing.resume);
   }
   return withComputed(updated);
 }
