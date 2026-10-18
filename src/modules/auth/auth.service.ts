@@ -25,7 +25,6 @@ export async function login(email: string, password: string) {
     isOwner: admin.isOwner,
     hasPortfolioAccess: admin.hasPortfolioAccess,
     hasExpensesAccess: admin.hasExpensesAccess,
-    hasInvestmentsAccess: admin.hasInvestmentsAccess,
     hasSavingsAccess: admin.hasSavingsAccess,
   };
   const token = jwt.sign(payload, env.jwtSecret, { expiresIn: env.jwtExpiresIn as jwt.SignOptions["expiresIn"] });
@@ -39,7 +38,6 @@ export async function login(email: string, password: string) {
       isOwner: admin.isOwner,
       hasPortfolioAccess: admin.hasPortfolioAccess,
       hasExpensesAccess: admin.hasExpensesAccess,
-      hasInvestmentsAccess: admin.hasInvestmentsAccess,
       hasSavingsAccess: admin.hasSavingsAccess,
     },
   };

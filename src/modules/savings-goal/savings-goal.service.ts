@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { ForbiddenError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 
 const includeRelations = {
   contributions: {
@@ -34,7 +34,8 @@ export async function listSavingsGoals(admin: RequestingAdmin) {
           ],
         },
     include: includeRelations,
-    orderBy: { createdAt: "desc" },
+    // Open goals first (null closedAt sorts first ascending), newest first within each.
+    orderBy: [{ closedAt: "asc" }, { createdAt: "desc" }],
   });
 }
 
@@ -126,6 +127,16 @@ export async function updateSavingsGoal(id: bigint, input: Partial<SavingsGoalIn
   return prisma.savingsGoal.findUniqueOrThrow({ where: { id }, include: includeRelations });
 }
 
+export async function setSavingsGoalClosed(id: bigint, closed: boolean, admin: RequestingAdmin) {
+  const existing = await prisma.savingsGoal.findUnique({ where: { id } });
+  if (!existing) {
+    throw NotFoundError("Savings goal not found");
+  }
+  await assertGoalAccess(id, admin);
+  await prisma.savingsGoal.update({ where: { id }, data: { closedAt: closed ? new Date() : null } });
+  return prisma.savingsGoal.findUniqueOrThrow({ where: { id }, include: includeRelations });
+}
+
 export async function deleteSavingsGoal(id: bigint, admin: RequestingAdmin) {
   const existing = await prisma.savingsGoal.findUnique({ where: { id } });
   if (!existing) {
@@ -151,6 +162,9 @@ export async function addSavingsContribution(
     throw NotFoundError("Savings goal not found");
   }
   await assertGoalAccess(goalId, admin);
+  if (goal.closedAt) {
+    throw BadRequestError("This savings goal is closed — reopen it to add contributions");
+  }
 
   await prisma.savingsContribution.create({
     data: {

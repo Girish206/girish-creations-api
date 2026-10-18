@@ -17,7 +17,6 @@ import { adminUserAdminRouter, expenseMembersAdminRouter } from "../modules/admi
 import { expenseCategoryAdminRouter } from "../modules/expense-category/expense-category.routes";
 import { expenseGroupAdminRouter } from "../modules/expense-group/expense-group.routes";
 import { expenseAdminRouter } from "../modules/expense/expense.routes";
-import { investmentAdminRouter } from "../modules/investment/investment.routes";
 import { savingsGoalAdminRouter } from "../modules/savings-goal/savings-goal.routes";
 
 export const publicRouter = Router();
@@ -48,5 +47,4 @@ adminRouter.use("/expense-members", expenseMembersAdminRouter);
 adminRouter.use("/expense-categories", expenseCategoryAdminRouter);
 adminRouter.use("/expense-groups", expenseGroupAdminRouter);
 adminRouter.use("/expenses", expenseAdminRouter);
-adminRouter.use("/investments", investmentAdminRouter);
 adminRouter.use("/savings-goals", savingsGoalAdminRouter);

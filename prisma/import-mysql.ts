@@ -68,7 +68,6 @@ const INDEXES: Record<string, { key: Record<string, 1>; unique?: boolean; partia
     { key: { savings_goal_id: 1 } },
     { key: { expense_group_id: 1 } },
   ],
-  investments: [{ key: { invested_by_admin_user_id: 1 } }],
   savings_goals: [{ key: { account_holder_admin_user_id: 1 } }],
   savings_contributions: [{ key: { goal_id: 1 } }, { key: { contributed_by_admin_user_id: 1 } }],
 };

@@ -35,6 +35,15 @@ export async function updateSavingsGoalHandler(req: Request, res: Response) {
   res.json({ data: updated });
 }
 
+const closeSchema = z.object({ closed: z.boolean() });
+
+export async function setSavingsGoalClosedHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { closed } = closeSchema.parse(req.body);
+  const updated = await savingsGoalService.setSavingsGoalClosed(id, closed, requestingAdmin(req));
+  res.json({ data: updated });
+}
+
 export async function deleteSavingsGoalHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   await savingsGoalService.deleteSavingsGoal(id, requestingAdmin(req));

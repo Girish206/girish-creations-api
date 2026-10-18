@@ -5,7 +5,6 @@ export interface AdminTokenPayload {
   isOwner: boolean;
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
-  hasInvestmentsAccess: boolean;
   hasSavingsAccess: boolean;
 }
 

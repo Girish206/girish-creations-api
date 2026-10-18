@@ -2,9 +2,12 @@ import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import {
+  addSettlementHandler,
   createExpenseGroupHandler,
+  deleteSettlementHandler,
   deleteExpenseGroupHandler,
   listExpenseGroupsHandler,
+  setExpenseGroupClosedHandler,
   updateExpenseGroupHandler,
 } from "./expense-group.controller";
 
@@ -24,4 +27,22 @@ expenseGroupAdminRouter.delete(
   requireAdminAuth,
   requireExpenseAccess,
   asyncHandler(deleteExpenseGroupHandler),
+);
+expenseGroupAdminRouter.put(
+  "/:id/status",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(setExpenseGroupClosedHandler),
+);
+expenseGroupAdminRouter.post(
+  "/:id/settlements",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(addSettlementHandler),
+);
+expenseGroupAdminRouter.delete(
+  "/:id/settlements/:settlementId",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(deleteSettlementHandler),
 );

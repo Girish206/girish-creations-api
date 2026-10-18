@@ -164,31 +164,31 @@ model ProjectDetails {
 }
 
 model AdminUser {
-  id                   BigInt   @id @default(0) @map("_id")
+  id                 BigInt   @id @default(0) @map("_id")
   // Both nullable: a "guest" member (added to appear in expense-split /
   // savings-holder pickers) has neither — they exist only to be listed.
   // Setting both later ("granting login access") promotes them to a
   // full account without needing a separate person/member table.
-  email                String?  @unique
-  passwordHash         String?  @map("password_hash")
-  name                 String?
-  isOwner              Boolean  @default(false) @map("is_owner")
-  isActive             Boolean  @default(true) @map("is_active")
-  hasPortfolioAccess   Boolean  @default(true) @map("has_portfolio_access")
+  email              String?  @unique
+  passwordHash       String?  @map("password_hash")
+  name               String?
+  isOwner            Boolean  @default(false) @map("is_owner")
+  isActive           Boolean  @default(true) @map("is_active")
+  hasPortfolioAccess Boolean  @default(true) @map("has_portfolio_access")
   // Independent per-section access within the expense-tracker module —
-  // e.g. someone can be given Savings only, without Expenses/Investments.
-  hasExpensesAccess    Boolean  @default(false) @map("has_expenses_access")
-  hasInvestmentsAccess Boolean  @default(false) @map("has_investments_access")
-  hasSavingsAccess     Boolean  @default(false) @map("has_savings_access")
-  createdAt            DateTime @default(now()) @map("created_at")
+  // e.g. someone can be given Savings only, without Expenses.
+  hasExpensesAccess  Boolean  @default(false) @map("has_expenses_access")
+  hasSavingsAccess   Boolean  @default(false) @map("has_savings_access")
+  createdAt          DateTime @default(now()) @map("created_at")
 
   expensesPaid           Expense[]                 @relation("ExpensePaidBy")
-  investmentsMade        Investment[]              @relation("InvestmentBy")
   savingsContributions   SavingsContribution[]     @relation("SavingsContributionBy")
   savingsAccountsHeld    SavingsGoal[]             @relation("SavingsAccountHolder")
   savingsGoalsCreated    SavingsGoal[]             @relation("SavingsGoalCreatedBy")
   expenseSplitShares     ExpenseSplitParticipant[]
   savingsGoalMemberships SavingsGoalMember[]
+  settlementsPaid        ExpenseGroupSettlement[]  @relation("SettlementFrom")
+  settlementsReceived    ExpenseGroupSettlement[]  @relation("SettlementTo")
 
   @@map("admin_users")
 }
@@ -196,6 +196,12 @@ model AdminUser {
 model ExpenseCategory {
   id        BigInt   @id @default(0) @map("_id")
   name      String   @unique
+  // How the category is drawn: "icon" (a Font Awesome class in `icon`),
+  // "text" (a short label/emoji in `icon`) or "image" (an uploaded file's
+  // /api/files/<id> path in `icon`). Null on older rows — the client then
+  // falls back to an icon suggested from the name.
+  iconType  String?  @map("icon_type")
+  icon      String?
   createdAt DateTime @default(now()) @map("created_at")
 
   expenses Expense[]
@@ -206,13 +212,45 @@ model ExpenseCategory {
 // A trip/event bucket ("Goa Trip 2026") — unlike ExpenseCategory, names
 // aren't unique since trips are one-off and names can legitimately repeat.
 model ExpenseGroup {
-  id        BigInt   @id @default(0) @map("_id")
+  id        BigInt    @id @default(0) @map("_id")
   name      String
-  createdAt DateTime @default(now()) @map("created_at")
+  // Optional trip window — when set, every expense in the group must be
+  // dated within it (inclusive), enforced in expense.service.ts.
+  startDate DateTime? @map("start_date")
+  endDate   DateTime? @map("end_date")
+  // Set once the trip is over and everyone has settled up — a closed group
+  // can't take new expenses (or edits to its existing ones) until reopened.
+  closedAt  DateTime? @map("closed_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
-  expenses Expense[]
+  expenses    Expense[]
+  settlements ExpenseGroupSettlement[]
 
   @@map("expense_groups")
+}
+
+// A repayment between two members to settle a group's split balances —
+// "Ravi paid Girish back ₹1,200 for the Goa trip". Balances are derived
+// (paid − share ± settlements), so these are the only stored part.
+model ExpenseGroupSettlement {
+  id        BigInt   @id @default(0) @map("_id")
+  amount    String
+  date      DateTime
+  createdAt DateTime @default(now()) @map("created_at")
+
+  expenseGroupId BigInt       @map("expense_group_id")
+  expenseGroup   ExpenseGroup @relation(fields: [expenseGroupId], references: [id], onDelete: Cascade)
+
+  fromAdminUserId BigInt    @map("from_admin_user_id")
+  fromAdminUser   AdminUser @relation("SettlementFrom", fields: [fromAdminUserId], references: [id])
+
+  toAdminUserId BigInt    @map("to_admin_user_id")
+  toAdminUser   AdminUser @relation("SettlementTo", fields: [toAdminUserId], references: [id])
+
+  @@index([expenseGroupId])
+  @@index([fromAdminUserId])
+  @@index([toAdminUserId])
+  @@map("expense_group_settlements")
 }
 
 model Expense {
@@ -268,23 +306,6 @@ model ExpenseSplitParticipant {
   @@map("expense_split_participants")
 }
 
-model Investment {
-  id             BigInt   @id @default(0) @map("_id")
-  title          String
-  type           String
-  amountInvested String   @map("amount_invested")
-  currentValue   String?  @map("current_value")
-  date           DateTime
-  notes          String?
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  investedByAdminUserId BigInt    @map("invested_by_admin_user_id")
-  investedBy            AdminUser @relation("InvestmentBy", fields: [investedByAdminUserId], references: [id])
-
-  @@index([investedByAdminUserId])
-  @@map("investments")
-}
-
 model SavingsGoal {
   id           BigInt    @id @default(0) @map("_id")
   name         String
@@ -295,6 +316,10 @@ model SavingsGoal {
   targetDate   DateTime? @map("target_date")
   // Where the money physically sits, and who holds that account.
   bankName     String?   @map("bank_name")
+  // Set when the goal is done (reached, withdrawn, abandoned) — a closed
+  // goal takes no more contributions and drops out of the "Spent From"
+  // picker, but keeps its history.
+  closedAt     DateTime? @map("closed_at")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   accountHolderAdminUserId BigInt?    @map("account_holder_admin_user_id")

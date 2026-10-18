@@ -20,12 +20,11 @@ export function requireAdminAuth(req: Request, _res: Response, next: NextFunctio
   }
 }
 
-export type AdminModule = "portfolio" | "expenses" | "investments" | "savings";
+export type AdminModule = "portfolio" | "expenses" | "savings";
 
 const accessField: Record<AdminModule, keyof AdminTokenPayload> = {
   portfolio: "hasPortfolioAccess",
   expenses: "hasExpensesAccess",
-  investments: "hasInvestmentsAccess",
   savings: "hasSavingsAccess",
 };
 
@@ -45,7 +44,7 @@ export function requireModuleAccess(module: AdminModule) {
 // picker, the module dashboard) rather than one specific sub-area.
 export function requireAnyExpenseAccess(req: Request, _res: Response, next: NextFunction) {
   const admin = req.admin;
-  const hasAccess = admin?.hasExpensesAccess || admin?.hasInvestmentsAccess || admin?.hasSavingsAccess;
+  const hasAccess = admin?.hasExpensesAccess || admin?.hasSavingsAccess;
   if (!hasAccess) {
     throw ForbiddenError("No access to the expense tracker");
   }

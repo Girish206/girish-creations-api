@@ -16,7 +16,6 @@ async function main() {
       isOwner: true,
       hasPortfolioAccess: true,
       hasExpensesAccess: true,
-      hasInvestmentsAccess: true,
       hasSavingsAccess: true,
     },
     create: {
@@ -25,7 +24,6 @@ async function main() {
       isOwner: true,
       hasPortfolioAccess: true,
       hasExpensesAccess: true,
-      hasInvestmentsAccess: true,
       hasSavingsAccess: true,
     },
   });

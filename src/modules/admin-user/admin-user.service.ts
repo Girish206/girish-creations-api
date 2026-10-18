@@ -10,11 +10,29 @@ const rawSelectFields = {
   isActive: true,
   hasPortfolioAccess: true,
   hasExpensesAccess: true,
-  hasInvestmentsAccess: true,
   hasSavingsAccess: true,
   passwordHash: true,
   createdAt: true,
 } as const;
+
+// Everything that points at an admin user. A user with none of these can be
+// deleted outright; otherwise they can only be deactivated.
+const linkedRecordCounts = {
+  expensesPaid: true,
+  savingsContributions: true,
+  savingsAccountsHeld: true,
+  savingsGoalsCreated: true,
+  expenseSplitShares: true,
+  savingsGoalMemberships: true,
+  settlementsPaid: true,
+  settlementsReceived: true,
+} as const;
+
+type LinkedCounts = Record<keyof typeof linkedRecordCounts, number>;
+
+function totalLinked(counts: LinkedCounts) {
+  return Object.values(counts).reduce((sum, n) => sum + n, 0);
+}
 
 // passwordHash itself is never sent to the client — only whether one is set
 // ("hasLogin"), which is what the UI needs to tell a login-enabled member
@@ -25,8 +43,11 @@ function toDto<T extends { passwordHash: string | null }>(row: T) {
 }
 
 export async function listAdminUsers() {
-  const rows = await prisma.adminUser.findMany({ select: rawSelectFields, orderBy: { createdAt: "asc" } });
-  return rows.map(toDto);
+  const rows = await prisma.adminUser.findMany({
+    select: { ...rawSelectFields, _count: { select: linkedRecordCounts } },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(({ _count, ...row }) => ({ ...toDto(row), linkedRecords: totalLinked(_count) }));
 }
 
 // Minimal, non-owner-gated listing of people who should appear in "who"
@@ -39,7 +60,6 @@ export async function listExpenseMembers() {
       isActive: true,
       OR: [
         { hasExpensesAccess: true },
-        { hasInvestmentsAccess: true },
         { hasSavingsAccess: true },
         { passwordHash: null },
       ],
@@ -57,7 +77,6 @@ export interface CreateAdminUserInput {
   name?: string | null;
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
-  hasInvestmentsAccess: boolean;
   hasSavingsAccess: boolean;
 }
 
@@ -69,7 +88,13 @@ export async function createAdminUser(input: CreateAdminUserInput) {
   if (input.email) {
     const existing = await prisma.adminUser.findUnique({ where: { email: input.email } });
     if (existing) {
-      throw ConflictError("An admin user with this email already exists");
+      // Deleting an account only deactivates it (see deleteAdminUser), so
+      // re-adding the same person lands here — point at the fix.
+      throw ConflictError(
+        existing.isActive
+          ? "An admin user with this email already exists"
+          : "This email belongs to a deactivated account. Edit that account and tick Active to restore it.",
+      );
     }
   }
 
@@ -81,7 +106,6 @@ export async function createAdminUser(input: CreateAdminUserInput) {
       name: input.name,
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
-      hasInvestmentsAccess: input.hasInvestmentsAccess,
       hasSavingsAccess: input.hasSavingsAccess,
     },
     select: rawSelectFields,
@@ -95,10 +119,12 @@ export interface UpdateAdminUserInput {
   // member's email. Password alone (existing email) just rotates it.
   email?: string;
   password?: string;
+  // Turns a login member back into a guest (password cleared, email kept
+  // so login can be granted again later with just a new password).
+  removeLogin?: boolean;
   isActive?: boolean;
   hasPortfolioAccess?: boolean;
   hasExpensesAccess?: boolean;
-  hasInvestmentsAccess?: boolean;
   hasSavingsAccess?: boolean;
 }
 
@@ -108,8 +134,15 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
     throw NotFoundError("Admin user not found");
   }
 
+  if (existing.isOwner && (input.isActive === false || input.removeLogin)) {
+    throw BadRequestError("The owner account can't be deactivated or lose login access");
+  }
+  if (input.removeLogin && input.password) {
+    throw BadRequestError("Choose either a new password or removing login, not both");
+  }
+
   const nextEmail = input.email ?? existing.email;
-  const nextHasPassword = input.password !== undefined || existing.passwordHash !== null;
+  const nextHasPassword = !input.removeLogin && (input.password !== undefined || existing.passwordHash !== null);
   if (nextHasPassword && !nextEmail) {
     throw BadRequestError("An email is required to grant login access");
   }
@@ -120,7 +153,11 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
     }
   }
 
-  const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : undefined;
+  const passwordHash = input.removeLogin
+    ? null
+    : input.password
+      ? await bcrypt.hash(input.password, 10)
+      : undefined;
   const updated = await prisma.adminUser.update({
     where: { id },
     data: {
@@ -130,7 +167,6 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
       isActive: input.isActive,
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
-      hasInvestmentsAccess: input.hasInvestmentsAccess,
       hasSavingsAccess: input.hasSavingsAccess,
     },
     select: rawSelectFields,
@@ -138,12 +174,25 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput) {
   return toDto(updated);
 }
 
-export async function deleteAdminUser(id: bigint) {
-  const existing = await prisma.adminUser.findUnique({ where: { id } });
+export async function deleteAdminUser(id: bigint, permanent = false) {
+  const existing = await prisma.adminUser.findUnique({
+    where: { id },
+    include: { _count: { select: linkedRecordCounts } },
+  });
   if (!existing) {
     throw NotFoundError("Admin user not found");
   }
+  if (existing.isOwner) {
+    throw BadRequestError("The owner account can't be deactivated or deleted");
+  }
+  if (permanent) {
+    if (totalLinked(existing._count) > 0) {
+      throw ConflictError("This person has expenses, savings or other records, so they can only be deactivated");
+    }
+    await prisma.adminUser.delete({ where: { id } });
+    return;
+  }
   // Soft-delete: deactivate rather than remove the row, since expenses/
-  // investments/savings contributions carry a required FK to this user.
+  // savings contributions carry a required FK to this user.
   await prisma.adminUser.update({ where: { id }, data: { isActive: false } });
 }

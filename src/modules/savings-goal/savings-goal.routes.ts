@@ -7,6 +7,7 @@ import {
   deleteSavingsContributionHandler,
   deleteSavingsGoalHandler,
   listSavingsGoalsHandler,
+  setSavingsGoalClosedHandler,
   updateSavingsGoalHandler,
 } from "./savings-goal.controller";
 
@@ -20,6 +21,12 @@ savingsGoalAdminRouter.put(
   requireAdminAuth,
   requireExpenseAccess,
   asyncHandler(updateSavingsGoalHandler),
+);
+savingsGoalAdminRouter.put(
+  "/:id/status",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(setSavingsGoalClosedHandler),
 );
 savingsGoalAdminRouter.delete(
   "/:id",

@@ -3,7 +3,7 @@ import { z } from "zod";
 import * as authService from "./auth.service";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 });
 

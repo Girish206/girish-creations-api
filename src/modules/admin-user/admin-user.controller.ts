@@ -13,14 +13,17 @@ export async function listExpenseMembersHandler(_req: Request, res: Response) {
   res.json({ data: items });
 }
 
+// Emails are stored trimmed and lowercased (login normalises the same way),
+// so "Ravi@Gmail.com " from a phone keyboard still signs in as typed.
+const emailSchema = z.string().trim().toLowerCase().email();
+
 const createSchema = z.object({
   // Omit both for a guest member (listed but can't log in).
-  email: z.string().email().nullable().optional(),
+  email: emailSchema.nullable().optional(),
   password: z.string().min(8).nullable().optional(),
   name: z.string().nullable().optional(),
   hasPortfolioAccess: z.boolean().default(false),
   hasExpensesAccess: z.boolean().default(false),
-  hasInvestmentsAccess: z.boolean().default(false),
   hasSavingsAccess: z.boolean().default(false),
 });
 
@@ -33,12 +36,12 @@ export async function createAdminUserHandler(req: Request, res: Response) {
 const updateSchema = z.object({
   name: z.string().nullable().optional(),
   // Setting email (+ password, for a guest) grants/changes login access.
-  email: z.string().email().optional(),
+  email: emailSchema.optional(),
   password: z.string().min(8).optional(),
+  removeLogin: z.boolean().optional(),
   isActive: z.boolean().optional(),
   hasPortfolioAccess: z.boolean().optional(),
   hasExpensesAccess: z.boolean().optional(),
-  hasInvestmentsAccess: z.boolean().optional(),
   hasSavingsAccess: z.boolean().optional(),
 });
 
@@ -51,6 +54,8 @@ export async function updateAdminUserHandler(req: Request, res: Response) {
 
 export async function deleteAdminUserHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  await adminUserService.deleteAdminUser(id);
+  // ?permanent=true removes the row (only allowed with no linked records);
+  // the default just deactivates.
+  await adminUserService.deleteAdminUser(id, req.query.permanent === "true");
   res.status(204).send();
 }

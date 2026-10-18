@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { ForbiddenError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 
 const includeRelations = {
   category: true,
@@ -39,6 +39,47 @@ async function assertExpenseAccess(expenseId: bigint, admin: RequestingAdmin) {
     expense.paidByAdminUserId === admin.id || expense.splitParticipants.some((p) => p.adminUserId === admin.id);
   if (!allowed) {
     throw ForbiddenError("You don't have access to this expense");
+  }
+}
+
+// A closed trip/event group is settled — its expenses are frozen so the
+// settle-up balances can't silently change underneath everyone.
+async function assertGroupOpen(expenseGroupId: bigint | null | undefined) {
+  if (!expenseGroupId) return;
+  const group = await prisma.expenseGroup.findUnique({ where: { id: expenseGroupId } });
+  if (group?.closedAt) {
+    throw BadRequestError(`"${group.name}" is closed — reopen it to change its expenses`);
+  }
+}
+
+const formatDay = (date: Date) =>
+  date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+// A group with a start/end date only accepts expenses dated inside that
+// window (inclusive). Compared as YYYY-MM-DD so time zones can't shift it.
+async function assertDateInGroupWindow(expenseGroupId: bigint | null | undefined, date: Date) {
+  if (!expenseGroupId) return;
+  const group = await prisma.expenseGroup.findUnique({ where: { id: expenseGroupId } });
+  if (!group) return;
+  const day = date.toISOString().slice(0, 10);
+  const start = group.startDate?.toISOString().slice(0, 10);
+  const end = group.endDate?.toISOString().slice(0, 10);
+  if ((start && day < start) || (end && day > end)) {
+    const window =
+      group.startDate && group.endDate
+        ? `between ${formatDay(group.startDate)} and ${formatDay(group.endDate)}`
+        : group.startDate
+          ? `on or after ${formatDay(group.startDate)}`
+          : `on or before ${formatDay(group.endDate!)}`;
+    throw BadRequestError(`Expenses in "${group.name}" must be dated ${window}`);
+  }
+}
+
+async function assertSavingsGoalOpen(savingsGoalId: bigint | null | undefined) {
+  if (!savingsGoalId) return;
+  const goal = await prisma.savingsGoal.findUnique({ where: { id: savingsGoalId } });
+  if (goal?.closedAt) {
+    throw BadRequestError(`Savings goal "${goal.name}" is closed`);
   }
 }
 
@@ -87,6 +128,10 @@ async function replaceSplitParticipants(expenseId: bigint, amount: string, admin
 }
 
 export async function createExpense(input: ExpenseInput) {
+  await assertGroupOpen(input.expenseGroupId);
+  await assertSavingsGoalOpen(input.savingsGoalId);
+  await assertDateInGroupWindow(input.expenseGroupId, new Date(input.date));
+
   const created = await prisma.expense.create({
     data: {
       amount: input.amount,
@@ -112,6 +157,17 @@ export async function updateExpense(id: bigint, input: Partial<ExpenseInput>, ad
     throw NotFoundError("Expense not found");
   }
   await assertExpenseAccess(id, admin);
+  await assertGroupOpen(existing.expenseGroupId);
+  if (input.expenseGroupId !== undefined && input.expenseGroupId !== existing.expenseGroupId) {
+    await assertGroupOpen(input.expenseGroupId);
+  }
+  if (input.savingsGoalId !== undefined && input.savingsGoalId !== existing.savingsGoalId) {
+    await assertSavingsGoalOpen(input.savingsGoalId);
+  }
+  await assertDateInGroupWindow(
+    input.expenseGroupId !== undefined ? input.expenseGroupId : existing.expenseGroupId,
+    input.date ? new Date(input.date) : existing.date,
+  );
 
   const updated = await prisma.expense.update({
     where: { id },
@@ -139,5 +195,6 @@ export async function deleteExpense(id: bigint, admin: RequestingAdmin) {
     throw NotFoundError("Expense not found");
   }
   await assertExpenseAccess(id, admin);
+  await assertGroupOpen(existing.expenseGroupId);
   await prisma.expense.delete({ where: { id } });
 }
