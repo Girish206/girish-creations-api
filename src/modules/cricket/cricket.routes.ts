@@ -14,6 +14,9 @@ import {
   grantPlayerLoginHandler,
   meHandler,
   revokePlayerLoginHandler,
+  setMyPhotoHandler,
+  signUpHandler,
+  updateMyProfileHandler,
   listPlayersHandler,
   listTournamentsHandler,
   movePlayerHandler,
@@ -42,6 +45,10 @@ import {
   updateMatchHandler,
 } from "./cricket-match.controller";
 
+// Public sign-up for players (mounted outside the signed-in router).
+export const cricketPublicRouter = Router();
+cricketPublicRouter.post("/register", asyncHandler(signUpHandler));
+
 // Players with cricket access read their own stats, matches and
 // tournaments (the handlers check which); everything else is super admin.
 export const cricketAdminRouter = Router();
@@ -49,6 +56,8 @@ cricketAdminRouter.use(requireAdminAuth, requireCricketAccess);
 const admin = requireSuperAdmin;
 
 cricketAdminRouter.get("/me", asyncHandler(meHandler));
+cricketAdminRouter.put("/me/profile", asyncHandler(updateMyProfileHandler));
+cricketAdminRouter.put("/me/photo", upload.fields([{ name: "photo", maxCount: 1 }]), asyncHandler(setMyPhotoHandler));
 cricketAdminRouter.get("/players", asyncHandler(listPlayersHandler));
 cricketAdminRouter.get("/tournaments/:id", asyncHandler(getTournamentHandler));
 cricketAdminRouter.get("/matches", asyncHandler(listMatchesHandler));

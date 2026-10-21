@@ -22,7 +22,7 @@ import { expenseCategoryAdminRouter } from "../modules/expense-category/expense-
 import { expenseGroupAdminRouter } from "../modules/expense-group/expense-group.routes";
 import { expenseAdminRouter } from "../modules/expense/expense.routes";
 import { savingsGoalAdminRouter } from "../modules/savings-goal/savings-goal.routes";
-import { cricketAdminRouter } from "../modules/cricket/cricket.routes";
+import { cricketAdminRouter, cricketPublicRouter } from "../modules/cricket/cricket.routes";
 
 // Read-only portfolio endpoints. Each handler reads the portfolio a request
 // is about from req.portfolioProfileId, so the same router serves a visitor
@@ -75,4 +75,6 @@ adminRouter.use("/expense-categories", expenseCategoryAdminRouter);
 adminRouter.use("/expense-groups", expenseGroupAdminRouter);
 adminRouter.use("/expenses", expenseAdminRouter);
 adminRouter.use("/savings-goals", savingsGoalAdminRouter);
+// Sign-up first: everything else under /cricket needs a signed-in user.
+adminRouter.use("/cricket", cricketPublicRouter);
 adminRouter.use("/cricket", cricketAdminRouter);

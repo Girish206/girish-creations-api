@@ -12,6 +12,9 @@ export interface AdminTokenPayload {
   hasSavingsAccess: boolean;
   // Missing on tokens issued before it existed (= false).
   hasCricketAccess?: boolean;
+  // A long-lived "keep me signed in" session (env.jwtRememberExpiresIn);
+  // refreshing keeps it long-lived.
+  remember?: boolean;
 }
 
 declare global {

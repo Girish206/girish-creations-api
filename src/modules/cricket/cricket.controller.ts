@@ -4,6 +4,7 @@ import * as cricketService from "./cricket.service";
 import { parseId } from "../../utils/parseId";
 import { mobileSchema } from "../../utils/mobile";
 import { isSuperAdmin } from "../../middleware/auth";
+import { issueToken } from "../auth/auth.service";
 
 // Who's asking: super admins see everything, players only their own.
 export const viewerOf = (req: Request) => ({ adminId: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) });
@@ -28,6 +29,25 @@ const bulkPlayersSchema = z.object({
 });
 
 const loginSchema = z.object({ password: z.string().min(8).optional() });
+
+const signUpSchema = z.object({
+  name: playerName.pipe(z.string().min(2).max(100)),
+  mobile: mobileSchema,
+  password: z.string().min(8).max(100),
+});
+
+const profileSchema = z
+  .object({
+    name: playerName.pipe(z.string().min(2).max(100)),
+    mobile: mobileSchema,
+    role: z.enum(["batter", "bowler", "all-rounder", "wicket-keeper"]).nullish(),
+    currentPassword: z.string().optional(),
+    newPassword: z.string().min(8).max(100).optional(),
+  })
+  .refine((p) => !p.newPassword || p.currentPassword, {
+    message: "Enter your current password",
+    path: ["currentPassword"],
+  });
 
 // Blank text comes through as null.
 const optionalText = (max: number) =>
@@ -91,6 +111,24 @@ const teamIndex = (req: Request) => z.coerce.number().int().min(0).parse(req.par
 
 export async function listPlayersHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.listPlayers(viewerOf(req).isSuperAdmin) });
+}
+
+// Public: creates the account and signs straight in (a remembered session).
+export async function signUpHandler(req: Request, res: Response) {
+  const account = await cricketService.signUp(signUpSchema.parse(req.body));
+  res.status(201).json({ data: issueToken(account, true) });
+}
+
+// Returns a fresh token, since the name and mobile ride in it.
+export async function updateMyProfileHandler(req: Request, res: Response) {
+  const account = await cricketService.updateMyProfile(viewerOf(req).adminId, profileSchema.parse(req.body));
+  res.json({ data: issueToken(account, Boolean(req.admin!.remember)) });
+}
+
+export async function setMyPhotoHandler(req: Request, res: Response) {
+  const files = (req.files as Record<string, Express.Multer.File[]> | undefined) ?? {};
+  const { removePhoto } = z.object({ removePhoto: z.literal("true").optional() }).parse(req.body);
+  res.json({ data: await cricketService.setMyPhoto(viewerOf(req).adminId, files.photo?.[0], removePhoto === "true") });
 }
 
 export async function meHandler(req: Request, res: Response) {

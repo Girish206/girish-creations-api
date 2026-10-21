@@ -13,6 +13,9 @@ export const env = {
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "12h",
+  // "Keep me signed in" sessions (Namma Aaata): renewed on every app open,
+  // so a player only signs in again after this long away.
+  jwtRememberExpiresIn: process.env.JWT_REMEMBER_EXPIRES_IN ?? "90d",
   adminSeedEmail: process.env.ADMIN_SEED_EMAIL,
   adminSeedPassword: process.env.ADMIN_SEED_PASSWORD,
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",

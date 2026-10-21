@@ -166,6 +166,93 @@ export async function revokePlayerLogin(id: bigint) {
   await prisma.adminUser.update({ where: { id: account.id }, data: { hasCricketAccess: false } });
 }
 
+// ===== Signing up and the player's own profile =====
+
+export interface CricketSignUpInput {
+  name: string;
+  mobile: string;
+  password: string;
+}
+
+// Anyone can create a player account with their name, mobile number and a
+// password. If an organiser already added them (same mobile), the account
+// links to that player; otherwise a new player joins the pool.
+export async function signUp(input: CricketSignUpInput) {
+  if (await accountForMobile(input.mobile)) {
+    throw ConflictError("An account with this mobile number already exists. Sign in instead.");
+  }
+  const player = await prisma.cricketPlayer.findFirst({ where: { mobile: input.mobile } });
+  if (!player) {
+    await assertNameFree(input.name);
+  }
+  const account = await prisma.adminUser.create({
+    data: {
+      name: input.name,
+      mobile: input.mobile,
+      passwordHash: await bcrypt.hash(input.password, 10),
+      hasCricketAccess: true,
+      hasPortfolioAccess: false,
+    },
+  });
+  if (!player) {
+    await prisma.cricketPlayer.create({ data: { name: input.name, mobile: input.mobile } });
+  }
+  return account;
+}
+
+export interface CricketProfileInput {
+  name: string;
+  mobile: string;
+  role?: string | null;
+  // Both needed to change the password.
+  currentPassword?: string;
+  newPassword?: string;
+}
+
+// The signed-in user edits their own name, mobile, playing role and
+// password. Name and mobile are kept the same on the account and its
+// player (the mobile is what links the two).
+export async function updateMyProfile(adminId: bigint, input: CricketProfileInput) {
+  const account = await prisma.adminUser.findUnique({ where: { id: adminId } });
+  if (!account) throw NotFoundError("Account not found");
+  const player = await findMyPlayer(adminId);
+
+  if (input.mobile !== account.mobile) {
+    await assertMobileFree(input.mobile, account.id);
+    await assertPlayerMobileFree(input.mobile, player?.id);
+  }
+  if (player && input.name.toLowerCase() !== player.name.toLowerCase()) {
+    await assertNameFree(input.name, player.id);
+  }
+
+  let passwordHash: string | undefined;
+  if (input.newPassword) {
+    const valid = account.passwordHash && (await bcrypt.compare(input.currentPassword ?? "", account.passwordHash));
+    // 400 rather than 401, which the app treats as "signed out".
+    if (!valid) throw BadRequestError("Your current password isn't right");
+    passwordHash = await bcrypt.hash(input.newPassword, 10);
+  }
+
+  const updated = await prisma.adminUser.update({
+    where: { id: account.id },
+    data: { name: input.name, mobile: input.mobile, passwordHash },
+  });
+  if (player) {
+    await prisma.cricketPlayer.update({
+      where: { id: player.id },
+      data: { name: input.name, mobile: input.mobile, ...(input.role !== undefined ? { role: input.role } : {}) },
+    });
+  }
+  return updated;
+}
+
+// The signed-in player's own photo.
+export async function setMyPhoto(adminId: bigint, photo: Express.Multer.File | undefined, remove: boolean) {
+  const player = await findMyPlayer(adminId);
+  if (!player) throw NotFoundError("Your player profile isn't set up yet");
+  return setPlayerPhoto(player.id, photo, remove);
+}
+
 // ===== The signed-in player =====
 
 export async function findMyPlayer(adminId: bigint) {

@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import type { AdminUser } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { UnauthorizedError } from "../../utils/httpError";
@@ -15,19 +16,14 @@ async function findByIdentifier(identifier: string) {
   return mobile ? prisma.adminUser.findFirst({ where: { mobile } }) : null;
 }
 
-export async function login(identifier: string, password: string) {
-  const admin = await findByIdentifier(identifier);
-  // A guest member (added purely to appear in expense-split / savings-holder
-  // pickers) has no passwordHash and can never log in until one is set.
-  if (!admin || !admin.isActive || !admin.passwordHash || (!admin.email && !admin.mobile)) {
-    throw UnauthorizedError("Invalid email or password");
-  }
+// A guest member (added purely to appear in expense-split / savings-holder
+// pickers) has no passwordHash and can never log in until one is set.
+const canSignIn = (admin: AdminUser) =>
+  admin.isActive && admin.passwordHash !== null && (admin.email !== null || admin.mobile !== null);
 
-  const valid = await bcrypt.compare(password, admin.passwordHash);
-  if (!valid) {
-    throw UnauthorizedError("Invalid email or password");
-  }
-
+// Signs a token for the account as it is now. `remember` makes it a
+// long-lived session (env.jwtRememberExpiresIn) instead of env.jwtExpiresIn.
+export function issueToken(admin: AdminUser, remember = false) {
   const payload: AdminTokenPayload = {
     sub: String(admin.id),
     email: admin.email,
@@ -38,8 +34,10 @@ export async function login(identifier: string, password: string) {
     hasExpensesAccess: admin.hasExpensesAccess,
     hasSavingsAccess: admin.hasSavingsAccess,
     hasCricketAccess: admin.hasCricketAccess,
+    ...(remember ? { remember: true } : {}),
   };
-  const token = jwt.sign(payload, env.jwtSecret, { expiresIn: env.jwtExpiresIn as jwt.SignOptions["expiresIn"] });
+  const expiresIn = (remember ? env.jwtRememberExpiresIn : env.jwtExpiresIn) as jwt.SignOptions["expiresIn"];
+  const token = jwt.sign(payload, env.jwtSecret, { expiresIn });
 
   return {
     token,
@@ -55,4 +53,30 @@ export async function login(identifier: string, password: string) {
       hasCricketAccess: admin.hasCricketAccess,
     },
   };
+}
+
+export async function login(identifier: string, password: string, remember = false) {
+  const admin = await findByIdentifier(identifier);
+  if (!admin || !canSignIn(admin)) {
+    throw UnauthorizedError("Invalid email or password");
+  }
+
+  const valid = await bcrypt.compare(password, admin.passwordHash!);
+  if (!valid) {
+    throw UnauthorizedError("Invalid email or password");
+  }
+
+  return issueToken(admin, remember);
+}
+
+// Swaps a still-valid token for a fresh one carrying the account's current
+// name and access, so a remembered session keeps sliding forward. `remember`
+// turns a short session into a remembered one. Fails once the account is
+// deactivated or loses its password.
+export async function refresh(current: AdminTokenPayload, remember = false) {
+  const admin = await prisma.adminUser.findUnique({ where: { id: BigInt(current.sub) } });
+  if (!admin || !canSignIn(admin)) {
+    throw UnauthorizedError("This account can no longer sign in");
+  }
+  return issueToken(admin, Boolean(current.remember) || remember);
 }
