@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { CricketBall, CricketInnings, CricketMatch } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { BadRequestError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ConflictError, NotFoundError } from "../../utils/httpError";
 import { inningsSummary, isLegal, isWicket, runsRun } from "./cricket.scoring";
-import { assertRoles, rolesWithin, type TeamRoles } from "./cricket.service";
+import { assertRoles, matchAccessOf, rolesWithin, type TeamRoles } from "./cricket.service";
+
+const newTeamKey = () => `f:${randomUUID()}`;
 
 export interface CricketMatchInput {
   // Null for a standalone match.
@@ -14,6 +17,9 @@ export interface CricketMatchInput {
   // created, their captains).
   teamNames?: [string, string];
   captainIds?: [bigint | null, bigint | null];
+  // Which existing team each side is (see CricketMatchTeam.teamKey); null
+  // for a new team, which gets a key of its own.
+  teamKeys?: [string | null, string | null];
   overs: number;
   scheduledAt?: Date | null;
   venue?: string | null;
@@ -71,6 +77,27 @@ export async function listMatches(tournamentId?: bigint | null) {
   });
 }
 
+// Every ground and city used on a match or tournament, once each (ignoring
+// case and spacing), for the venue / city suggestions on the forms.
+export async function listPlaces() {
+  const [matches, tournaments] = await Promise.all([
+    prisma.cricketMatch.findMany({ select: { venue: true, city: true } }),
+    prisma.cricketTournament.findMany({ select: { ground: true, city: true } }),
+  ]);
+  const distinct = (values: (string | null)[]) => {
+    const byKey = new Map<string, string>();
+    for (const value of values) {
+      const trimmed = value?.trim().replace(/\s+/g, " ");
+      if (trimmed && !byKey.has(trimmed.toLowerCase())) byKey.set(trimmed.toLowerCase(), trimmed);
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  };
+  return {
+    grounds: distinct([...matches.map((m) => m.venue), ...tournaments.map((t) => t.ground)]),
+    cities: distinct([...matches.map((m) => m.city), ...tournaments.map((t) => t.city)]),
+  };
+}
+
 async function getMatchOrThrow(id: bigint) {
   const match = await prisma.cricketMatch.findUnique({ where: { id } });
   if (!match) {
@@ -104,9 +131,14 @@ async function matchTeamsFor(input: CricketMatchInput) {
     if (named.length && (await prisma.cricketPlayer.count({ where: { id: { in: named } } })) !== named.length) {
       throw BadRequestError("That captain is no longer on the player list");
     }
+    const keys = input.teamKeys ?? [null, null];
+    if (keys[0] !== null && keys[0] === keys[1]) {
+      throw BadRequestError("Pick two different teams");
+    }
     return [nameA, nameB].map((name, teamIndex) => ({
       teamIndex,
       name,
+      teamKey: keys[teamIndex] ?? newTeamKey(),
       playerIds: captains[teamIndex] === null ? [] : [captains[teamIndex]!],
       captainId: captains[teamIndex],
       viceCaptainId: null,
@@ -142,17 +174,34 @@ export async function createMatch(input: CricketMatchInput, createdById: bigint)
   });
 }
 
-// Edits a match that hasn't started (its details, and a standalone one's names).
+// Edits a match that hasn't started (its details, and a standalone one's
+// names), or a live one's details only — its sides and XIs stay as they are.
 export async function updateMatch(id: bigint, input: Omit<CricketMatchInput, "tournamentId">) {
   const match = await getMatchOrThrow(id);
+  if (match.status === "live") {
+    // Cutting the overs (e.g. for rain) can't undo overs already bowled, or
+    // end the innings in progress.
+    match.innings.forEach((innings) => {
+      const legalBalls = innings.balls.filter(isLegal).length;
+      if (legalBalls > input.overs * 6 || (!innings.closed && legalBalls >= input.overs * 6)) {
+        throw BadRequestError(`${Math.ceil((legalBalls + 1) / 6)} overs at least — some have already been bowled`);
+      }
+    });
+    return prisma.cricketMatch.update({ where: { id }, data: matchDetails(input) });
+  }
   if (match.status !== "scheduled") {
-    throw BadRequestError("Only a match that hasn't started can be edited");
+    throw BadRequestError("A finished match can't be edited");
   }
   // A standalone match keeps its sides (and the captains picked for them),
-  // taking any new names.
+  // taking any new names and teams.
   const teams =
     match.tournamentId === null
-      ? match.teams.map((team, i) => ({ ...team, name: input.teamNames?.[i] ?? team.name }))
+      ? match.teams.map((team, i) => ({
+          ...team,
+          name: input.teamNames?.[i] ?? team.name,
+          // Picking another team swaps the key too; a renamed new one keeps its own.
+          teamKey: input.teamKeys ? (input.teamKeys[i] ?? team.teamKey ?? newTeamKey()) : team.teamKey,
+        }))
       : await matchTeamsFor({ ...input, tournamentId: match.tournamentId });
   if (teams[0].name.toLowerCase() === teams[1].name.toLowerCase()) {
     throw BadRequestError("The two teams need different names");
@@ -177,7 +226,7 @@ const newInnings = (battingTeam: number): CricketInnings => ({
   balls: [],
 });
 
-export async function startMatch(id: bigint, input: StartMatchInput) {
+export async function startMatch(id: bigint, input: StartMatchInput, scorer: Scorer) {
   const match = await getMatchOrThrow(id);
   if (match.status !== "scheduled") {
     throw BadRequestError("This match has already started");
@@ -200,6 +249,10 @@ export async function startMatch(id: bigint, input: StartMatchInput) {
     where: { id },
     data: {
       status: "live",
+      // Whoever starts it scores it first.
+      scoringById: scorer.adminId,
+      scoringByName: scorer.name,
+      scoringSeenAt: new Date(),
       tossWinner: input.tossWinner,
       tossDecision: input.tossDecision,
       teams: match.teams.map((team, index) => ({
@@ -210,6 +263,83 @@ export async function startMatch(id: bigint, input: StartMatchInput) {
       innings: [newInnings(battingFirst)],
     },
   });
+}
+
+// One person scores a live match at a time. Whoever takes the seat keeps it
+// — closing the app doesn't free it — until they hand it over or stop
+// scoring. Only an organiser can take it from them (e.g. a dead phone).
+export interface Scorer {
+  adminId: bigint;
+  name: string | null;
+}
+
+// Takes the scoring seat (or keeps it) if it's free or already the
+// scorer's; takeOver (organisers only) takes it from whoever has it. Done in
+// one conditional update so two phones can't both get it.
+export async function claimScoring(id: bigint, scorer: Scorer, takeOver = false) {
+  const match = await getMatchOrThrow(id);
+  if (match.status !== "live") {
+    throw BadRequestError("This match isn't live");
+  }
+  const seat = { scoringById: scorer.adminId, scoringByName: scorer.name, scoringSeenAt: new Date() };
+  const { count } = await prisma.cricketMatch.updateMany({
+    where: takeOver
+      ? { id }
+      : {
+          id,
+          OR: [{ scoringById: scorer.adminId }, { scoringById: null }, { scoringById: { isSet: false } }],
+        },
+    data: seat,
+  });
+  if (count === 0) {
+    const holder = await getMatchOrThrow(id);
+    throw ConflictError(`${holder.scoringByName ?? "Someone else"} is scoring this match`);
+  }
+  return getMatchOrThrow(id);
+}
+
+// Passes the seat to another player (through the account signed in with
+// their mobile), making them one of the match's scorers if they aren't
+// already. Only the one scoring — or an organiser — can.
+export async function handOverScoring(id: bigint, from: Scorer, fromOrganiser: boolean, playerId: bigint) {
+  const match = await getMatchOrThrow(id);
+  if (match.status !== "live") {
+    throw BadRequestError("This match isn't live");
+  }
+  if (match.scoringById !== from.adminId && !fromOrganiser) {
+    throw ConflictError(`${match.scoringByName ?? "Someone else"} is scoring this match`);
+  }
+  const player = await prisma.cricketPlayer.findUnique({ where: { id: playerId } });
+  if (!player) throw NotFoundError("Player not found");
+  const account = player.mobile ? await prisma.adminUser.findFirst({ where: { mobile: player.mobile } }) : null;
+  if (!account) {
+    throw BadRequestError(`${player.name} hasn't signed in to CrickVerse yet, so they can't score`);
+  }
+  const access = await matchAccessOf(id, { adminId: account.id, isSuperAdmin: account.isSuperAdmin || account.isOwner });
+  return prisma.cricketMatch.update({
+    where: { id },
+    data: {
+      scoringById: account.id,
+      scoringByName: player.name,
+      scoringSeenAt: new Date(),
+      ...(access ? {} : { scorerIds: { push: player.id } }),
+    },
+  });
+}
+
+// Stops scoring and leaves the seat free for any of the match's scorers.
+export async function releaseScoring(id: bigint, adminId: bigint) {
+  await prisma.cricketMatch.updateMany({
+    where: { id, scoringById: adminId },
+    data: { scoringById: null, scoringByName: null, scoringSeenAt: null },
+  });
+  return getMatchOrThrow(id);
+}
+
+// Every scoring change on a live match needs the seat; making one keeps it.
+export async function assertScoringSeat(id: bigint, scorer: Scorer) {
+  const match = await getMatchOrThrow(id);
+  if (match.status === "live") await claimScoring(id, scorer);
 }
 
 function liveInnings(match: CricketMatch) {

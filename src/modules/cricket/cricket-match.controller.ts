@@ -3,9 +3,15 @@ import { z } from "zod";
 import * as matchService from "./cricket-match.service";
 import { EXTRA_TYPES, WICKET_TYPES } from "./cricket.scoring";
 import { parseId } from "../../utils/parseId";
-import { BadRequestError } from "../../utils/httpError";
-import { assertCanManageTournament, assertCanViewMatch, assertCanViewTournament } from "./cricket.service";
-import { BALL_TYPES, MATCH_TYPES, PITCH_TYPES, viewerOf } from "./cricket.controller";
+import { BadRequestError, ForbiddenError } from "../../utils/httpError";
+import {
+  assertCanManageTournament,
+  assertCanViewMatch,
+  assertCanViewTournament,
+  matchAccessOf,
+  setMatchScorers,
+} from "./cricket.service";
+import { BALL_TYPES, MATCH_TYPES, PITCH_TYPES, scorersSchema, viewerOf } from "./cricket.controller";
 
 const id = z.coerce.bigint().positive();
 // The round a match is played in, as listed on the client.
@@ -25,6 +31,11 @@ const MATCH_STAGES = [
 ] as const;
 const teamSlot = z.number().int().min(0).max(1);
 const teamName = z.string().trim().min(1).max(60);
+// See CricketMatchTeam.teamKey / effectiveTeamKey.
+const teamKey = z
+  .string()
+  .regex(/^(t:\d+:\d+|f:[0-9a-f-]{36}|legacy:\d+:.{1,60})$/, "Unknown team")
+  .nullable();
 
 const matchDetails = {
   // A tournament match picks two of its teams; a standalone one names its
@@ -32,6 +43,7 @@ const matchDetails = {
   teamAIndex: z.number().int().min(0).optional(),
   teamBIndex: z.number().int().min(0).optional(),
   teamNames: z.tuple([teamName, teamName]).optional(),
+  teamKeys: z.tuple([teamKey, teamKey]).optional(),
   overs: z.number().int().min(1).max(50),
   scheduledAt: z.coerce.date().nullish(),
   venue: z
@@ -127,6 +139,10 @@ export async function listMatchesHandler(req: Request, res: Response) {
   res.json({ data: await matchService.listMatches(tournamentId) });
 }
 
+export async function listPlacesHandler(_req: Request, res: Response) {
+  res.json({ data: await matchService.listPlaces() });
+}
+
 export async function getMatchHandler(req: Request, res: Response) {
   const match = await matchService.getMatch(parseId(req.params.id));
   await assertCanViewMatch(match, viewerOf(req));
@@ -150,8 +166,37 @@ export async function deleteMatchHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
+// The account taking the scoring seat, named so the others know who has it.
+export const scorerOf = (req: Request): matchService.Scorer => ({
+  adminId: viewerOf(req).adminId,
+  name: req.admin!.name,
+});
+
 export async function startMatchHandler(req: Request, res: Response) {
-  res.json({ data: await matchService.startMatch(parseId(req.params.id), startSchema.parse(req.body)) });
+  res.json({ data: await matchService.startMatch(parseId(req.params.id), startSchema.parse(req.body), scorerOf(req)) });
+}
+
+const isOrganiser = async (req: Request) =>
+  (await matchAccessOf(parseId(req.params.id), viewerOf(req))) === "organise";
+
+// Opening the scorer takes the seat when it's free; takeOver (organisers
+// only) takes it from whoever has it.
+export async function claimScoringHandler(req: Request, res: Response) {
+  const { takeOver } = z.object({ takeOver: z.boolean().optional() }).parse(req.body ?? {});
+  if (takeOver && !(await isOrganiser(req))) {
+    throw ForbiddenError("Only the match's organiser can take over scoring");
+  }
+  res.json({ data: await matchService.claimScoring(parseId(req.params.id), scorerOf(req), takeOver) });
+}
+
+export async function handOverScoringHandler(req: Request, res: Response) {
+  const { playerId } = z.object({ playerId: id }).parse(req.body);
+  const matchId = parseId(req.params.id);
+  res.json({ data: await matchService.handOverScoring(matchId, scorerOf(req), await isOrganiser(req), playerId) });
+}
+
+export async function releaseScoringHandler(req: Request, res: Response) {
+  res.json({ data: await matchService.releaseScoring(parseId(req.params.id), viewerOf(req).adminId) });
 }
 
 export async function setCurrentPlayersHandler(req: Request, res: Response) {
@@ -173,6 +218,11 @@ export async function endInningsHandler(req: Request, res: Response) {
 
 export async function abandonMatchHandler(req: Request, res: Response) {
   res.json({ data: await matchService.abandonMatch(parseId(req.params.id)) });
+}
+
+export async function setMatchScorersHandler(req: Request, res: Response) {
+  const { playerIds } = scorersSchema.parse(req.body);
+  res.json({ data: await setMatchScorers(parseId(req.params.id), playerIds) });
 }
 
 export async function setPlayerOfMatchHandler(req: Request, res: Response) {

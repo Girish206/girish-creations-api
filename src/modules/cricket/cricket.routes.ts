@@ -3,10 +3,12 @@ import { asyncHandler } from "../../utils/asyncHandler";
 import { upload } from "../../middleware/upload";
 import { requireAdminAuth, requireCricketAccess, requireSuperAdmin } from "../../middleware/auth";
 import { parseId } from "../../utils/parseId";
-import { assertCanManageMatch, assertCanManageTournament } from "./cricket.service";
+import { assertCanManageTournament, assertMatchAccess, type MatchAccess } from "./cricket.service";
+import { assertScoringSeat } from "./cricket-match.service";
 import {
   addTeamPlayersHandler,
   addFriendlyTeamPlayersHandler,
+  listTeamPlayersHandler,
   addTeamsHandler,
   lookupPlayerHandler,
   lookupTeamPlayerHandler,
@@ -19,6 +21,7 @@ import {
   getTournamentHandler,
   grantPlayerLoginHandler,
   meHandler,
+  playerCareerHandler,
   revokePlayerLoginHandler,
   setMyPhotoHandler,
   signUpHandler,
@@ -35,18 +38,25 @@ import {
   updatePlayerHandler,
   updateTeamHandler,
   setTeamRolesHandler,
+  setTournamentScorersHandler,
   updateTournamentHandler,
   viewerOf,
 } from "./cricket.controller";
 import {
   abandonMatchHandler,
   addBallHandler,
+  claimScoringHandler,
   createMatchHandler,
   deleteMatchHandler,
   endInningsHandler,
   getMatchHandler,
+  handOverScoringHandler,
   listMatchesHandler,
+  listPlacesHandler,
+  releaseScoringHandler,
+  scorerOf,
   setCurrentPlayersHandler,
+  setMatchScorersHandler,
   setPlayerOfMatchHandler,
   startMatchHandler,
   undoBallHandler,
@@ -69,8 +79,19 @@ const manageTournament = asyncHandler(async (req, _res, next) => {
   await assertCanManageTournament(parseId(req.params.id), viewerOf(req));
   next();
 });
-const manageMatch = asyncHandler(async (req, _res, next) => {
-  await assertCanManageMatch(parseId(req.params.id), viewerOf(req));
+// See MatchAccess: organisers delete, captains also pick the scorers, and
+// scorers edit and score.
+const matchAccess = (needed: MatchAccess) =>
+  asyncHandler(async (req, _res, next) => {
+    await assertMatchAccess(parseId(req.params.id), viewerOf(req), needed);
+    next();
+  });
+const organiseMatch = matchAccess("organise");
+const captainMatch = matchAccess("captain");
+const scoreMatch = matchAccess("score");
+// Only the one holding the scoring seat changes a live match's score.
+const holdSeat = asyncHandler(async (req, _res, next) => {
+  await assertScoringSeat(parseId(req.params.id), scorerOf(req));
   next();
 });
 
@@ -87,14 +108,20 @@ cricketAdminRouter.post("/follows", asyncHandler(followHandler));
 cricketAdminRouter.delete("/follows", asyncHandler(unfollowHandler));
 cricketAdminRouter.get("/matches", asyncHandler(listMatchesHandler));
 cricketAdminRouter.get("/matches/:id", asyncHandler(getMatchHandler));
+// Grounds and cities already used, suggested on the match / tournament forms.
+cricketAdminRouter.get("/places", asyncHandler(listPlacesHandler));
 // A team's captain adds players to it (the service checks who's asking).
 cricketAdminRouter.get("/tournaments/:id/teams/:index/lookup", asyncHandler(lookupTeamPlayerHandler));
 cricketAdminRouter.post("/tournaments/:id/teams/:index/players", asyncHandler(addTeamPlayersHandler));
 // A friendly team's captain adds players to its upcoming matches.
+// Everyone in a team (?key=, see effectiveTeamKey), for a one-off side's squad picker.
+cricketAdminRouter.get("/teams/players", asyncHandler(listTeamPlayersHandler));
 cricketAdminRouter.post("/friendly-teams/players", asyncHandler(addFriendlyTeamPlayersHandler));
 
 // A one-off match's captain, found by mobile before adding them.
 cricketAdminRouter.get("/players/lookup", asyncHandler(lookupPlayerHandler));
+// Anyone can open a player's profile (their matches and tournaments).
+cricketAdminRouter.get("/players/:id/career", asyncHandler(playerCareerHandler));
 cricketAdminRouter.post("/players", asyncHandler(createPlayerHandler));
 cricketAdminRouter.post("/players/bulk", admin, asyncHandler(createPlayersBulkHandler));
 cricketAdminRouter.put("/players/:id", admin, asyncHandler(updatePlayerHandler));
@@ -129,14 +156,19 @@ cricketAdminRouter.post("/tournaments/:id/teams", manageTournament, asyncHandler
 cricketAdminRouter.put("/tournaments/:id/teams/:index", manageTournament, asyncHandler(updateTeamHandler));
 cricketAdminRouter.put("/tournaments/:id/teams/:index/roles", manageTournament, asyncHandler(setTeamRolesHandler));
 cricketAdminRouter.delete("/tournaments/:id/teams/:index", manageTournament, asyncHandler(removeTeamHandler));
+cricketAdminRouter.put("/tournaments/:id/scorers", manageTournament, asyncHandler(setTournamentScorersHandler));
 
 cricketAdminRouter.post("/matches", asyncHandler(createMatchHandler));
-cricketAdminRouter.put("/matches/:id", manageMatch, asyncHandler(updateMatchHandler));
-cricketAdminRouter.delete("/matches/:id", manageMatch, asyncHandler(deleteMatchHandler));
-cricketAdminRouter.post("/matches/:id/start", manageMatch, asyncHandler(startMatchHandler));
-cricketAdminRouter.put("/matches/:id/current", manageMatch, asyncHandler(setCurrentPlayersHandler));
-cricketAdminRouter.post("/matches/:id/balls", manageMatch, asyncHandler(addBallHandler));
-cricketAdminRouter.delete("/matches/:id/balls/last", manageMatch, asyncHandler(undoBallHandler));
-cricketAdminRouter.post("/matches/:id/end-innings", manageMatch, asyncHandler(endInningsHandler));
-cricketAdminRouter.post("/matches/:id/abandon", manageMatch, asyncHandler(abandonMatchHandler));
-cricketAdminRouter.put("/matches/:id/player-of-match", manageMatch, asyncHandler(setPlayerOfMatchHandler));
+cricketAdminRouter.put("/matches/:id", scoreMatch, asyncHandler(updateMatchHandler));
+cricketAdminRouter.delete("/matches/:id", organiseMatch, asyncHandler(deleteMatchHandler));
+cricketAdminRouter.put("/matches/:id/scorers", captainMatch, asyncHandler(setMatchScorersHandler));
+cricketAdminRouter.post("/matches/:id/start", scoreMatch, asyncHandler(startMatchHandler));
+cricketAdminRouter.post("/matches/:id/scoring", scoreMatch, asyncHandler(claimScoringHandler));
+cricketAdminRouter.delete("/matches/:id/scoring", scoreMatch, asyncHandler(releaseScoringHandler));
+cricketAdminRouter.post("/matches/:id/scoring/hand-over", scoreMatch, asyncHandler(handOverScoringHandler));
+cricketAdminRouter.put("/matches/:id/current", scoreMatch, holdSeat, asyncHandler(setCurrentPlayersHandler));
+cricketAdminRouter.post("/matches/:id/balls", scoreMatch, holdSeat, asyncHandler(addBallHandler));
+cricketAdminRouter.delete("/matches/:id/balls/last", scoreMatch, holdSeat, asyncHandler(undoBallHandler));
+cricketAdminRouter.post("/matches/:id/end-innings", scoreMatch, holdSeat, asyncHandler(endInningsHandler));
+cricketAdminRouter.post("/matches/:id/abandon", scoreMatch, holdSeat, asyncHandler(abandonMatchHandler));
+cricketAdminRouter.put("/matches/:id/player-of-match", scoreMatch, asyncHandler(setPlayerOfMatchHandler));

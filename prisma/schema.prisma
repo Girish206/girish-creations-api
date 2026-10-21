@@ -551,6 +551,8 @@ model CricketTournament {
   matchType       String?           @map("match_type")
   // Default overs per innings for its matches.
   overs           Int?
+  // Players the organiser lets score (and edit) every match in it.
+  scorerIds       BigInt[]          @map("scorer_ids")
   // The account that created it; it (and super admins) manage it. Null for
   // tournaments made before this existed (super admins only).
   createdById     BigInt?           @map("created_by_id")
@@ -612,6 +614,12 @@ type CricketMatchTeam {
   captainId     BigInt?  @map("captain_id")
   viceCaptainId BigInt?  @map("vice_captain_id")
   keeperId      BigInt?  @map("keeper_id")
+  // Which team a standalone match's side is, so matches of the same team
+  // share its players even when two different teams have the same name:
+  // "t:<tournamentId>:<teamIndex>" for a tournament team, "f:<uuid>" for a
+  // friendly team. Null on tournament matches and older one-offs; see
+  // effectiveTeamKey.
+  teamKey       String?  @map("team_key")
 }
 
 model CricketMatch {
@@ -644,6 +652,15 @@ model CricketMatch {
   winner          Int?
   resultText      String?            @map("result_text")
   playerOfMatchId BigInt?            @map("player_of_match_id")
+  // Players added to score (and edit) this match, along with its
+  // organisers and both captains.
+  scorerIds       BigInt[]           @map("scorer_ids")
+  // Only one person scores at a time: the account holding the scorer (and
+  // its name, to tell the others) and when it took it. It stays theirs
+  // until they hand it over or stop (see claimScoring).
+  scoringById     BigInt?            @map("scoring_by_id")
+  scoringByName   String?            @map("scoring_by_name")
+  scoringSeenAt   DateTime?          @map("scoring_seen_at")
   // The account that created it; it, the tournament's creator and super
   // admins manage it (score it too). Null for older matches.
   createdById     BigInt?            @map("created_by_id")

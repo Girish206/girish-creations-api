@@ -10,6 +10,8 @@ import { issueToken } from "../auth/auth.service";
 export const viewerOf = (req: Request) => ({ adminId: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) });
 
 const playerId = z.coerce.bigint().positive();
+// A tournament's or match's scorers (players), replacing the list.
+export const scorersSchema = z.object({ playerIds: z.array(playerId).max(20) });
 
 // Trimmed with inner runs of spaces collapsed ("Ravi  Kumar" → "Ravi Kumar").
 const playerName = z.string().transform((name) => name.trim().replace(/\s+/g, " "));
@@ -144,6 +146,10 @@ export async function setMyPhotoHandler(req: Request, res: Response) {
 
 export async function meHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.getMe(viewerOf(req).adminId) });
+}
+
+export async function playerCareerHandler(req: Request, res: Response) {
+  res.json({ data: await cricketService.getPlayerCareer(parseId(req.params.id)) });
 }
 
 export async function grantPlayerLoginHandler(req: Request, res: Response) {
@@ -289,6 +295,11 @@ export async function addTeamPlayersHandler(req: Request, res: Response) {
 
 // The team's captain (checked in the service) adds players to its upcoming
 // friendly matches.
+export async function listTeamPlayersHandler(req: Request, res: Response) {
+  const { key } = z.object({ key: z.string().trim().min(1).max(120) }).parse(req.query);
+  res.json({ data: await cricketService.listTeamPlayers(key) });
+}
+
 export async function addFriendlyTeamPlayersHandler(req: Request, res: Response) {
   const { teamName, players } = teamPlayersSchema
     .extend({ teamName: z.string().trim().min(1).max(60) })
@@ -299,6 +310,11 @@ export async function addFriendlyTeamPlayersHandler(req: Request, res: Response)
 export async function setTeamRolesHandler(req: Request, res: Response) {
   const roles = teamRolesSchema.parse(req.body);
   res.json({ data: await cricketService.setTeamRoles(parseId(req.params.id), teamIndex(req), roles) });
+}
+
+export async function setTournamentScorersHandler(req: Request, res: Response) {
+  const { playerIds } = scorersSchema.parse(req.body);
+  res.json({ data: await cricketService.setTournamentScorers(parseId(req.params.id), playerIds) });
 }
 
 export async function removeTeamHandler(req: Request, res: Response) {
