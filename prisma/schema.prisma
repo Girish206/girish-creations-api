@@ -475,6 +475,26 @@ model CricketPlayer {
   @@map("cricket_players")
 }
 
+// Who a player follows: another player, a tournament, or one team in a
+// tournament. Following a tournament (or one of its teams) also lets a
+// player open it read-only.
+model CricketFollow {
+  id         BigInt   @id @default(0) @map("_id")
+  // The CricketPlayer doing the following.
+  followerId BigInt   @map("follower_id")
+  // "player", "team" or "tournament".
+  kind       String
+  // The followed player, or the tournament (a team's too).
+  targetId   BigInt   @map("target_id")
+  // Teams only: index into the tournament's teams; null otherwise.
+  teamIndex  Int?     @map("team_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([followerId])
+  @@index([kind, targetId])
+  @@map("cricket_follows")
+}
+
 // A set of players the organiser judges to be of equal strength — one per
 // team (2 for two teams, 3 for three). Generating teams deals each set's
 // players out to different teams at random, so every team gets one of each
@@ -485,8 +505,13 @@ type CricketMatchSet {
 }
 
 type CricketTeam {
-  name      String
-  playerIds BigInt[] @map("player_ids")
+  name          String
+  playerIds     BigInt[] @map("player_ids")
+  // Leadership, each one of playerIds (null = not picked). The keeper may
+  // also be the captain or vice-captain; captain and vice-captain differ.
+  captainId     BigInt?  @map("captain_id")
+  viceCaptainId BigInt?  @map("vice_captain_id")
+  keeperId      BigInt?  @map("keeper_id")
 }
 
 // Teams and matched sets are embedded so a generate or a swap is a single
@@ -526,6 +551,9 @@ model CricketTournament {
   matchType       String?           @map("match_type")
   // Default overs per innings for its matches.
   overs           Int?
+  // The account that created it; it (and super admins) manage it. Null for
+  // tournaments made before this existed (super admins only).
+  createdById     BigInt?           @map("created_by_id")
   createdAt       DateTime          @default(now()) @map("created_at")
 
   @@map("cricket_tournaments")
@@ -550,6 +578,13 @@ type CricketBall {
   dismissedId  BigInt? @map("dismissed_id")
   // Catcher, run-out thrower or wicket-keeper.
   fielderId    BigInt? @map("fielder_id")
+  // Where the shot went, when the scorer marks it on the ground: x / y from
+  // -1 to 1 with the pitch at the centre, the bowler's end up and (for a
+  // right-hander) the off side to the right. shotZone is the fielding
+  // position it lands in ("Cover", "Deep mid wicket", ...). Null = not marked.
+  shotX        Float?  @map("shot_x")
+  shotY        Float?  @map("shot_y")
+  shotZone     String? @map("shot_zone")
 }
 
 type CricketInnings {
@@ -568,15 +603,21 @@ type CricketInnings {
 // the playing XI chosen for this match.
 type CricketMatchTeam {
   // Which tournament team this is (index into the tournament's teams), for
-  // the points table.
-  teamIndex Int      @map("team_index")
-  name      String
-  playerIds BigInt[] @map("player_ids")
+  // the points table; a standalone match's sides are just 0 and 1.
+  teamIndex     Int      @map("team_index")
+  name          String
+  playerIds     BigInt[] @map("player_ids")
+  // This match's leaders, from its playing XI: copied from the tournament
+  // team, and changeable when the match starts.
+  captainId     BigInt?  @map("captain_id")
+  viceCaptainId BigInt?  @map("vice_captain_id")
+  keeperId      BigInt?  @map("keeper_id")
 }
 
 model CricketMatch {
   id              BigInt             @id @default(0) @map("_id")
-  tournamentId    BigInt             @map("tournament_id")
+  // Null for a standalone match, outside any tournament.
+  tournamentId    BigInt?            @map("tournament_id")
   // Exactly two.
   teams           CricketMatchTeam[]
   // Overs per innings.
@@ -603,6 +644,9 @@ model CricketMatch {
   winner          Int?
   resultText      String?            @map("result_text")
   playerOfMatchId BigInt?            @map("player_of_match_id")
+  // The account that created it; it, the tournament's creator and super
+  // admins manage it (score it too). Null for older matches.
+  createdById     BigInt?            @map("created_by_id")
   createdAt       DateTime           @default(now()) @map("created_at")
 
   @@index([tournamentId])

@@ -11,8 +11,7 @@ export const viewerOf = (req: Request) => ({ adminId: BigInt(req.admin!.sub), is
 
 const playerId = z.coerce.bigint().positive();
 
-// Trimmed with inner runs of spaces collapsed, so "Ravi  Kumar" and
-// "Ravi Kumar" count as the same name (uniqueness also ignores case).
+// Trimmed with inner runs of spaces collapsed ("Ravi  Kumar" → "Ravi Kumar").
 const playerName = z.string().transform((name) => name.trim().replace(/\s+/g, " "));
 
 const playerSchema = z.object({
@@ -30,8 +29,10 @@ const bulkPlayersSchema = z.object({
 
 const loginSchema = z.object({ password: z.string().min(8).optional() });
 
+// The name can be left out when an organiser already added this mobile
+// (setting a password for a team-added player): the player's name is used.
 const signUpSchema = z.object({
-  name: playerName.pipe(z.string().min(2).max(100)),
+  name: playerName.pipe(z.string().min(2).max(100)).optional(),
   mobile: mobileSchema,
   password: z.string().min(8).max(100),
 });
@@ -103,6 +104,16 @@ const moveSchema = z.object({ playerId, toTeamIndex: z.number().int().min(0) });
 const teamSchema = z.object({
   name: z.string().trim().min(1).max(60),
   playerIds: z.array(playerId).max(100),
+  // Left out = keep the team's current ones.
+  captainId: playerId.nullish(),
+  viceCaptainId: playerId.nullish(),
+  keeperId: playerId.nullish(),
+});
+
+const teamRolesSchema = z.object({
+  captainId: playerId.nullable(),
+  viceCaptainId: playerId.nullable(),
+  keeperId: playerId.nullable(),
 });
 
 const addTeamsSchema = z.object({ teams: z.array(teamSchema).min(1).max(cricketService.MAX_TEAMS) });
@@ -146,9 +157,19 @@ export async function revokePlayerLoginHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
+// Anyone organising a tournament adds players to its squad; only super
+// admins get a clash for a number that's already on the list.
 export async function createPlayerHandler(req: Request, res: Response) {
-  const created = await cricketService.createPlayer(playerSchema.parse(req.body));
+  const input = playerSchema.parse(req.body);
+  const created = viewerOf(req).isSuperAdmin
+    ? await cricketService.createPlayer(input)
+    : await cricketService.findOrCreatePlayer(input);
   res.status(201).json({ data: created });
+}
+
+export async function lookupPlayerHandler(req: Request, res: Response) {
+  const { mobile } = z.object({ mobile: mobileSchema }).parse(req.query);
+  res.json({ data: await cricketService.lookupPlayer(mobile) });
 }
 
 export async function createPlayersBulkHandler(req: Request, res: Response) {
@@ -184,7 +205,7 @@ export async function getTournamentHandler(req: Request, res: Response) {
 }
 
 export async function createTournamentHandler(req: Request, res: Response) {
-  const created = await cricketService.createTournament(tournamentSchema.parse(req.body));
+  const created = await cricketService.createTournament(tournamentSchema.parse(req.body), viewerOf(req).adminId);
   res.status(201).json({ data: created });
 }
 
@@ -242,6 +263,42 @@ export async function addTeamsHandler(req: Request, res: Response) {
 export async function updateTeamHandler(req: Request, res: Response) {
   const team = teamSchema.parse(req.body);
   res.json({ data: await cricketService.updateTeam(parseId(req.params.id), teamIndex(req), team) });
+}
+
+const teamPlayersSchema = z.object({
+  players: z
+    .array(z.object({ mobile: mobileSchema, name: playerName.pipe(z.string().min(1).max(100)).optional() }))
+    .min(1)
+    .max(100),
+});
+
+// Captain (or super admin) only — checked in the service.
+export async function lookupTeamPlayerHandler(req: Request, res: Response) {
+  const { mobile } = z.object({ mobile: mobileSchema }).parse(req.query);
+  res.json({
+    data: await cricketService.lookupTeamPlayer(parseId(req.params.id), teamIndex(req), mobile, viewerOf(req)),
+  });
+}
+
+export async function addTeamPlayersHandler(req: Request, res: Response) {
+  const { players } = teamPlayersSchema.parse(req.body);
+  res.json({
+    data: await cricketService.addTeamPlayers(parseId(req.params.id), teamIndex(req), players, viewerOf(req)),
+  });
+}
+
+// The team's captain (checked in the service) adds players to its upcoming
+// friendly matches.
+export async function addFriendlyTeamPlayersHandler(req: Request, res: Response) {
+  const { teamName, players } = teamPlayersSchema
+    .extend({ teamName: z.string().trim().min(1).max(60) })
+    .parse(req.body);
+  res.json({ data: await cricketService.addFriendlyTeamPlayers(teamName, players, viewerOf(req)) });
+}
+
+export async function setTeamRolesHandler(req: Request, res: Response) {
+  const roles = teamRolesSchema.parse(req.body);
+  res.json({ data: await cricketService.setTeamRoles(parseId(req.params.id), teamIndex(req), roles) });
 }
 
 export async function removeTeamHandler(req: Request, res: Response) {

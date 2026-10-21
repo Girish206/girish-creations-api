@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import type { AdminUser } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
-import { UnauthorizedError } from "../../utils/httpError";
+import { HttpError, UnauthorizedError } from "../../utils/httpError";
 import { normalizeMobile } from "../../utils/mobile";
 import type { AdminTokenPayload } from "../../types/express";
 
@@ -58,6 +58,16 @@ export function issueToken(admin: AdminUser, remember = false) {
 export async function login(identifier: string, password: string, remember = false) {
   const admin = await findByIdentifier(identifier);
   if (!admin || !canSignIn(admin)) {
+    // An organiser added this number to the cricket pool (or as a guest)
+    // but nobody has set a password for it yet: point them at sign-up.
+    const mobile = identifier.includes("@") ? null : normalizeMobile(identifier);
+    const pendingPlayer =
+      mobile && (!admin || (admin.isActive && admin.passwordHash === null))
+        ? await prisma.cricketPlayer.findFirst({ where: { mobile } })
+        : null;
+    if (pendingPlayer) {
+      throw new HttpError(401, "This number has no password yet. Create your account to set one.", "NO_PASSWORD");
+    }
     throw UnauthorizedError("Invalid email or password");
   }
 

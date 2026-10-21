@@ -4,7 +4,7 @@ import * as matchService from "./cricket-match.service";
 import { EXTRA_TYPES, WICKET_TYPES } from "./cricket.scoring";
 import { parseId } from "../../utils/parseId";
 import { BadRequestError } from "../../utils/httpError";
-import { assertCanViewTournament } from "./cricket.service";
+import { assertCanManageTournament, assertCanViewMatch, assertCanViewTournament } from "./cricket.service";
 import { BALL_TYPES, MATCH_TYPES, PITCH_TYPES, viewerOf } from "./cricket.controller";
 
 const id = z.coerce.bigint().positive();
@@ -24,10 +24,14 @@ const MATCH_STAGES = [
   "friendly",
 ] as const;
 const teamSlot = z.number().int().min(0).max(1);
+const teamName = z.string().trim().min(1).max(60);
 
 const matchDetails = {
-  teamAIndex: z.number().int().min(0),
-  teamBIndex: z.number().int().min(0),
+  // A tournament match picks two of its teams; a standalone one names its
+  // own two sides.
+  teamAIndex: z.number().int().min(0).optional(),
+  teamBIndex: z.number().int().min(0).optional(),
+  teamNames: z.tuple([teamName, teamName]).optional(),
   overs: z.number().int().min(1).max(50),
   scheduledAt: z.coerce.date().nullish(),
   venue: z
@@ -48,13 +52,22 @@ const matchDetails = {
   pitchType: z.enum(PITCH_TYPES).nullish(),
 };
 
-const createMatchSchema = z.object({ tournamentId: id, ...matchDetails });
+const createMatchSchema = z.object({
+  tournamentId: id.nullish().transform((tid) => tid ?? null),
+  ...matchDetails,
+  // A standalone match's captains (either may be left out); a tournament
+  // match takes its teams' own.
+  captainIds: z.tuple([id.nullable(), id.nullable()]).optional(),
+});
 const updateMatchSchema = z.object(matchDetails);
+
+const sideRoles = z.object({ captainId: id.nullable(), viceCaptainId: id.nullable(), keeperId: id.nullable() });
 
 const startSchema = z.object({
   tossWinner: teamSlot,
   tossDecision: z.enum(["bat", "bowl"]),
   playerIds: z.tuple([z.array(id).max(30), z.array(id).max(30)]),
+  roles: z.tuple([sideRoles, sideRoles]).optional(),
 });
 
 const currentPlayersSchema = z.object({
@@ -73,6 +86,10 @@ const ballSchema = z
     wicketType: z.enum(WICKET_TYPES).nullable(),
     dismissedId: id.nullable(),
     fielderId: id.nullable(),
+    // The shot map: all three together, or none.
+    shotX: z.number().min(-1).max(1).nullish().transform((v) => v ?? null),
+    shotY: z.number().min(-1).max(1).nullish().transform((v) => v ?? null),
+    shotZone: z.string().trim().min(1).max(40).nullish().transform((v) => v ?? null),
   })
   .superRefine((ball, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: "custom", message });
@@ -90,13 +107,18 @@ const ballSchema = z
     if (ball.extraType === "no-ball" && ball.wicketType && !["run-out", "retired-hurt"].includes(ball.wicketType)) {
       issue("Only a run-out can happen off a no-ball");
     }
+    if ([ball.shotX, ball.shotY, ball.shotZone].some((v) => v === null) && (ball.shotX ?? ball.shotY ?? ball.shotZone) !== null) {
+      issue("A shot needs its position and zone");
+    }
   });
 
 const playerOfMatchSchema = z.object({ playerId: id.nullable() });
 
 // Players list one tournament's matches at a time (one they're in).
+// tournamentId=none lists the standalone matches (super admin only).
 export async function listMatchesHandler(req: Request, res: Response) {
-  const tournamentId = typeof req.query.tournamentId === "string" ? parseId(req.query.tournamentId) : undefined;
+  const query = req.query.tournamentId;
+  const tournamentId = query === "none" ? null : typeof query === "string" ? parseId(query) : undefined;
   const viewer = viewerOf(req);
   if (!viewer.isSuperAdmin) {
     if (!tournamentId) throw BadRequestError("Choose a tournament");
@@ -107,12 +129,16 @@ export async function listMatchesHandler(req: Request, res: Response) {
 
 export async function getMatchHandler(req: Request, res: Response) {
   const match = await matchService.getMatch(parseId(req.params.id));
-  await assertCanViewTournament(match.tournamentId, viewerOf(req));
+  await assertCanViewMatch(match, viewerOf(req));
   res.json({ data: match });
 }
 
+// Anyone can make a standalone match; one in a tournament needs its organiser.
 export async function createMatchHandler(req: Request, res: Response) {
-  res.status(201).json({ data: await matchService.createMatch(createMatchSchema.parse(req.body)) });
+  const input = createMatchSchema.parse(req.body);
+  const viewer = viewerOf(req);
+  if (input.tournamentId !== null) await assertCanManageTournament(input.tournamentId, viewer);
+  res.status(201).json({ data: await matchService.createMatch(input, viewer.adminId) });
 }
 
 export async function updateMatchHandler(req: Request, res: Response) {

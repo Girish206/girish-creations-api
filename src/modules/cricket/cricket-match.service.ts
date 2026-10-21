@@ -2,11 +2,18 @@ import type { CricketBall, CricketInnings, CricketMatch } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { BadRequestError, NotFoundError } from "../../utils/httpError";
 import { inningsSummary, isLegal, isWicket, runsRun } from "./cricket.scoring";
+import { assertRoles, rolesWithin, type TeamRoles } from "./cricket.service";
 
 export interface CricketMatchInput {
-  tournamentId: bigint;
-  teamAIndex: number;
-  teamBIndex: number;
+  // Null for a standalone match.
+  tournamentId: bigint | null;
+  // Two of the tournament's teams...
+  teamAIndex?: number;
+  teamBIndex?: number;
+  // ...or, without a tournament, the two sides' names (and, when it's
+  // created, their captains).
+  teamNames?: [string, string];
+  captainIds?: [bigint | null, bigint | null];
   overs: number;
   scheduledAt?: Date | null;
   venue?: string | null;
@@ -33,6 +40,9 @@ export interface StartMatchInput {
   tossDecision: "bat" | "bowl";
   // Playing XI of teams[0] and teams[1].
   playerIds: [bigint[], bigint[]];
+  // Each side's captain / vice-captain / keeper for this match; left out =
+  // the ones copied from the tournament team (if they're in the XI).
+  roles?: [TeamRoles, TeamRoles];
 }
 
 export interface CurrentPlayersInput {
@@ -48,11 +58,15 @@ export interface BallInput {
   wicketType: string | null;
   dismissedId: bigint | null;
   fielderId: bigint | null;
+  shotX: number | null;
+  shotY: number | null;
+  shotZone: string | null;
 }
 
-export async function listMatches(tournamentId?: bigint) {
+// undefined = every match, null = the standalone ones.
+export async function listMatches(tournamentId?: bigint | null) {
   return prisma.cricketMatch.findMany({
-    where: tournamentId ? { tournamentId } : {},
+    where: tournamentId === undefined ? {} : { tournamentId },
     orderBy: [{ scheduledAt: "asc" }, { createdAt: "asc" }],
   });
 }
@@ -69,29 +83,58 @@ export async function getMatch(id: bigint) {
   return getMatchOrThrow(id);
 }
 
-// Snapshots both tournament teams (name + current roster as the default
-// playing XI) onto the match.
+// Snapshots both tournament teams (name, current roster as the default
+// playing XI, and its leaders) onto the match. A standalone match's sides
+// start empty; their players are picked when it starts.
 async function matchTeamsFor(input: CricketMatchInput) {
+  if (input.tournamentId === null) {
+    const [nameA, nameB] = input.teamNames ?? [];
+    if (!nameA || !nameB) {
+      throw BadRequestError("Name both teams");
+    }
+    if (nameA.toLowerCase() === nameB.toLowerCase()) {
+      throw BadRequestError("The two teams need different names");
+    }
+    // A captain joins their side's squad straight away.
+    const captains = input.captainIds ?? [null, null];
+    const named = captains.filter((captainId): captainId is bigint => captainId !== null);
+    if (named.length === 2 && named[0] === named[1]) {
+      throw BadRequestError("One player can't captain both sides");
+    }
+    if (named.length && (await prisma.cricketPlayer.count({ where: { id: { in: named } } })) !== named.length) {
+      throw BadRequestError("That captain is no longer on the player list");
+    }
+    return [nameA, nameB].map((name, teamIndex) => ({
+      teamIndex,
+      name,
+      playerIds: captains[teamIndex] === null ? [] : [captains[teamIndex]!],
+      captainId: captains[teamIndex],
+      viceCaptainId: null,
+      keeperId: null,
+    }));
+  }
   const tournament = await prisma.cricketTournament.findUnique({ where: { id: input.tournamentId } });
   if (!tournament) {
     throw NotFoundError("Tournament not found");
   }
   const { teamAIndex, teamBIndex } = input;
   const count = tournament.teams.length;
-  if (teamAIndex === teamBIndex || teamAIndex >= count || teamBIndex >= count) {
+  if (teamAIndex === undefined || teamBIndex === undefined || teamAIndex === teamBIndex || teamAIndex >= count || teamBIndex >= count) {
     throw BadRequestError("Pick two different teams from the tournament");
   }
   return [teamAIndex, teamBIndex].map((teamIndex) => ({
     teamIndex,
     name: tournament.teams[teamIndex].name,
     playerIds: tournament.teams[teamIndex].playerIds,
+    ...rolesWithin(tournament.teams[teamIndex], tournament.teams[teamIndex].playerIds),
   }));
 }
 
-export async function createMatch(input: CricketMatchInput) {
+export async function createMatch(input: CricketMatchInput, createdById: bigint) {
   return prisma.cricketMatch.create({
     data: {
       tournamentId: input.tournamentId,
+      createdById,
       teams: await matchTeamsFor(input),
       ...matchDetails(input),
       innings: [],
@@ -99,17 +142,24 @@ export async function createMatch(input: CricketMatchInput) {
   });
 }
 
+// Edits a match that hasn't started (its details, and a standalone one's names).
 export async function updateMatch(id: bigint, input: Omit<CricketMatchInput, "tournamentId">) {
   const match = await getMatchOrThrow(id);
   if (match.status !== "scheduled") {
     throw BadRequestError("Only a match that hasn't started can be edited");
   }
+  // A standalone match keeps its sides (and the captains picked for them),
+  // taking any new names.
+  const teams =
+    match.tournamentId === null
+      ? match.teams.map((team, i) => ({ ...team, name: input.teamNames?.[i] ?? team.name }))
+      : await matchTeamsFor({ ...input, tournamentId: match.tournamentId });
+  if (teams[0].name.toLowerCase() === teams[1].name.toLowerCase()) {
+    throw BadRequestError("The two teams need different names");
+  }
   return prisma.cricketMatch.update({
     where: { id },
-    data: {
-      teams: await matchTeamsFor({ ...input, tournamentId: match.tournamentId }),
-      ...matchDetails(input),
-    },
+    data: { teams, ...matchDetails(input) },
   });
 }
 
@@ -143,6 +193,8 @@ export async function startMatch(id: bigint, input: StartMatchInput) {
   if (known !== xiA.length + xiB.length) {
     throw BadRequestError("Some of these players no longer exist");
   }
+  const xis = [xiA, xiB];
+  input.roles?.forEach((roles, index) => assertRoles(roles, xis[index]));
   const battingFirst = input.tossDecision === "bat" ? input.tossWinner : 1 - input.tossWinner;
   return prisma.cricketMatch.update({
     where: { id },
@@ -150,7 +202,11 @@ export async function startMatch(id: bigint, input: StartMatchInput) {
       status: "live",
       tossWinner: input.tossWinner,
       tossDecision: input.tossDecision,
-      teams: match.teams.map((team, index) => ({ ...team, playerIds: index === 0 ? xiA : xiB })),
+      teams: match.teams.map((team, index) => ({
+        ...team,
+        playerIds: xis[index],
+        ...rolesWithin(input.roles?.[index] ?? team, xis[index]),
+      })),
       innings: [newInnings(battingFirst)],
     },
   });
@@ -280,6 +336,9 @@ export async function addBall(id: bigint, input: BallInput) {
     wicketType: input.wicketType,
     dismissedId: input.wicketType ? input.dismissedId : null,
     fielderId: input.wicketType ? input.fielderId : null,
+    shotX: input.shotX,
+    shotY: input.shotY,
+    shotZone: input.shotZone,
   };
   innings.balls.push(ball);
 
