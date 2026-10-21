@@ -70,6 +70,7 @@ const INDEXES: Record<string, { key: Record<string, 1>; unique?: boolean; partia
   ],
   savings_goals: [{ key: { account_holder_admin_user_id: 1 } }],
   savings_contributions: [{ key: { goal_id: 1 } }, { key: { contributed_by_admin_user_id: 1 } }],
+  cricket_matches: [{ key: { tournament_id: 1 } }],
 };
 
 function delegateFor(modelName: string): Delegate {

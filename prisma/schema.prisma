@@ -19,41 +19,41 @@ datasource db {
 // One portfolio per admin account: each login with portfolio access edits
 // its own profile, and visitors reach it at /<username> on the public site.
 model UserProfile {
-  id              BigInt  @id @default(0) @map("_id")
+  id                BigInt   @id @default(0) @map("_id")
   // URL handle for the public portfolio (/<username>). Optional (as is
   // adminUserId) only because the original single profile predates it —
   // prisma/link-profiles.ts backfills both, and every profile created since
   // gets them (profile.service.ts getOrCreateOwnProfile).
-  username        String? @unique
-  fullName        String  @map("full_name")
-  email           String
-  bio             String?
-  objective       String?
+  username          String?  @unique
+  fullName          String   @map("full_name")
+  email             String
+  bio               String?
+  objective         String?
   // "/api/files/<id>" path of a StoredFile (see bottom of this file).
-  profilePicture  String? @map("profile_picture")
-  signature       String?
-  contactNumber   String? @map("contact_number")
+  profilePicture    String?  @map("profile_picture")
+  signature         String?
+  contactNumber     String?  @map("contact_number")
   // Whether visitors see contactNumber on the public portfolio. Null on
   // profiles saved before the setting existed, which means shown.
   showContactNumber Boolean? @map("show_contact_number")
-  address         String?
-  totalExperience String  @default("0.00") @map("total_experience")
-  facebookId      String? @map("facebook_id")
-  instaId         String? @map("insta_id")
-  linkedinId      String? @map("linkedin_id")
-  twitterId       String? @map("twitter_id")
+  address           String?
+  totalExperience   String   @default("0.00") @map("total_experience")
+  facebookId        String?  @map("facebook_id")
+  instaId           String?  @map("insta_id")
+  linkedinId        String?  @map("linkedin_id")
+  twitterId         String?  @map("twitter_id")
   // "/api/files/<id>" path of an uploaded PDF, or a static path for the
   // original site's bundled résumé.
-  resume          String?
+  resume            String?
   // Which public design the portfolio uses: "tech" (developer look —
   // terminal, tech stack, monospace accents) or "classic" (plain, editorial
   // look for non-technical people). Null on profiles saved before the choice
   // existed, which means "tech".
-  portfolioStyle  String? @map("portfolio_style")
+  portfolioStyle    String?  @map("portfolio_style")
   // Colour shade of the classic design: "emerald", "ocean", "indigo",
   // "rose", "sunset" or "violet". Null (or a retired shade name) means
   // "emerald". Unused by the tech design.
-  portfolioAccent String? @map("portfolio_accent")
+  portfolioAccent   String?  @map("portfolio_accent")
 
   adminUserId BigInt?    @unique @map("admin_user_id")
   adminUser   AdminUser? @relation(fields: [adminUserId], references: [id])
@@ -189,41 +189,48 @@ model ProjectDetails {
 }
 
 model AdminUser {
-  id                 BigInt   @id @default(0) @map("_id")
+  id                   BigInt   @id @default(0) @map("_id")
   // Both nullable: a "guest" member (added to appear in expense-split /
   // savings-holder pickers) has neither — they exist only to be listed.
   // Setting both later ("granting login access") promotes them to a
   // full account without needing a separate person/member table.
-  email              String?  @unique
-  passwordHash       String?  @map("password_hash")
-  name               String?
-  isOwner            Boolean  @default(false) @map("is_owner")
+  email                String?  @unique
+  // Digits only (utils/mobile.ts). An alternative login to email, and what
+  // links an account to its cricket player (same number). Unique, checked
+  // in admin-user.service.ts — no index, since most accounts have none.
+  mobile               String?
+  passwordHash         String?  @map("password_hash")
+  name                 String?
+  isOwner              Boolean  @default(false) @map("is_owner")
   // Super admins see every account's data in the admin panel (all expenses
   // and savings, and any portfolio via the portfolio picker) and manage
   // accounts. The owner always counts as one; only the owner grants it.
-  isSuperAdmin       Boolean  @default(false) @map("is_super_admin")
+  isSuperAdmin         Boolean  @default(false) @map("is_super_admin")
   // Who added this person. A member without super admin manages only the
   // people they added themselves (Money Hub → Members).
-  createdByAdminUserId BigInt? @map("created_by_admin_user_id")
-  isActive           Boolean  @default(true) @map("is_active")
-  hasPortfolioAccess Boolean  @default(true) @map("has_portfolio_access")
+  createdByAdminUserId BigInt?  @map("created_by_admin_user_id")
+  isActive             Boolean  @default(true) @map("is_active")
+  hasPortfolioAccess   Boolean  @default(true) @map("has_portfolio_access")
   // Independent per-section access within the expense-tracker module —
   // e.g. someone can be given Savings only, without Expenses.
-  hasExpensesAccess  Boolean  @default(false) @map("has_expenses_access")
-  hasSavingsAccess   Boolean  @default(false) @map("has_savings_access")
-  createdAt          DateTime @default(now()) @map("created_at")
+  hasExpensesAccess    Boolean  @default(false) @map("has_expenses_access")
+  hasSavingsAccess     Boolean  @default(false) @map("has_savings_access")
+  // Player access to the Cricket module: their own stats, matches and
+  // tournaments. Managing cricket needs super admin.
+  hasCricketAccess     Boolean  @default(false) @map("has_cricket_access")
+  createdAt            DateTime @default(now()) @map("created_at")
 
-  portfolioProfile       UserProfile?
-  expensesPaid           Expense[]                 @relation("ExpensePaidBy")
-  savingsContributions   SavingsContribution[]     @relation("SavingsContributionBy")
-  savingsAccountsHeld    SavingsGoal[]             @relation("SavingsAccountHolder")
-  savingsGoalsCreated    SavingsGoal[]             @relation("SavingsGoalCreatedBy")
-  expenseSplitShares     ExpenseSplitParticipant[]
-  savingsGoalMemberships SavingsGoalMember[]
+  portfolioProfile        UserProfile?
+  expensesPaid            Expense[]                 @relation("ExpensePaidBy")
+  savingsContributions    SavingsContribution[]     @relation("SavingsContributionBy")
+  savingsAccountsHeld     SavingsGoal[]             @relation("SavingsAccountHolder")
+  savingsGoalsCreated     SavingsGoal[]             @relation("SavingsGoalCreatedBy")
+  expenseSplitShares      ExpenseSplitParticipant[]
+  savingsGoalMemberships  SavingsGoalMember[]
   expenseGroupMemberships ExpenseGroupMember[]
-  expensesCreated        Expense[]                 @relation("ExpenseCreatedBy")
-  settlementsPaid        ExpenseGroupSettlement[]  @relation("SettlementFrom")
-  settlementsReceived    ExpenseGroupSettlement[]  @relation("SettlementTo")
+  expensesCreated         Expense[]                 @relation("ExpenseCreatedBy")
+  settlementsPaid         ExpenseGroupSettlement[]  @relation("SettlementFrom")
+  settlementsReceived     ExpenseGroupSettlement[]  @relation("SettlementTo")
 
   @@map("admin_users")
 }
@@ -447,4 +454,157 @@ model StoredFile {
   createdAt   DateTime @default(now()) @map("created_at")
 
   @@map("files")
+}
+
+// ===== Cricket tournaments (super admins only) =====
+
+// The pool of people who can be picked for a tournament's teams.
+model CricketPlayer {
+  id        BigInt   @id @default(0) @map("_id")
+  name      String
+  // Digits only (utils/mobile.ts), unique among players. Required for new
+  // players; it's also how a player's login account is found (an AdminUser
+  // with the same mobile).
+  mobile    String?
+  // "batter", "bowler", "all-rounder" or "wicket-keeper"; null = not set.
+  role      String?
+  // Profile photo, as an /api/files/<id> path.
+  photoUrl  String?  @map("photo_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("cricket_players")
+}
+
+// A set of players the organiser judges to be of equal strength — one per
+// team (2 for two teams, 3 for three). Generating teams deals each set's
+// players out to different teams at random, so every team gets one of each
+// matched set. A set may be smaller than the team count (odd players left
+// over); its players go to the teams with the fewest players.
+type CricketMatchSet {
+  playerIds BigInt[] @map("player_ids")
+}
+
+type CricketTeam {
+  name      String
+  playerIds BigInt[] @map("player_ids")
+}
+
+// Teams and matched sets are embedded so a generate or a swap is a single
+// atomic document write.
+model CricketTournament {
+  id              BigInt            @id @default(0) @map("_id")
+  name            String
+  // The squad: which players from the shared list take part. Only they can
+  // be matched into sets.
+  playerIds       BigInt[]          @map("player_ids")
+  // One entry per team; the team count is teams.length. Players are empty
+  // until teams are generated.
+  teams           CricketTeam[]
+  matchSets       CricketMatchSet[] @map("match_sets")
+  // When the teams were last generated; null = not yet.
+  generatedAt     DateTime?         @map("generated_at")
+  // Details shown on the tournament and copied onto each new match (all
+  // optional: tournaments made before these existed have none).
+  // Uploaded images, as /api/files/<id> paths.
+  logoUrl         String?           @map("logo_url")
+  bannerUrl       String?           @map("banner_url")
+  city            String?
+  ground          String?
+  organiserName   String?           @map("organiser_name")
+  organiserMobile String?           @map("organiser_mobile")
+  organiserEmail  String?           @map("organiser_email")
+  startDate       DateTime?         @map("start_date")
+  endDate         DateTime?         @map("end_date")
+  // "open", "corporate", "community", "school", "other", "series",
+  // "college" or "university".
+  category        String?
+  // "tennis", "leather" or "other".
+  ballType        String?           @map("ball_type")
+  // "rough", "cement", "turf", "astroturf" or "matting".
+  pitchType       String?           @map("pitch_type")
+  // "limited-overs", "box", "pair", "test" or "hundred".
+  matchType       String?           @map("match_type")
+  // Default overs per innings for its matches.
+  overs           Int?
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  @@map("cricket_tournaments")
+}
+
+// One delivery. batterId / nonStrikerId / bowlerId are who was in place
+// when it was bowled, which is also what undoing it restores.
+type CricketBall {
+  batterId     BigInt  @map("batter_id")
+  nonStrikerId BigInt  @map("non_striker_id")
+  bowlerId     BigInt  @map("bowler_id")
+  // Runs off the bat.
+  runs         Int
+  // "wide", "no-ball", "bye" or "leg-bye"; null = none.
+  extraType    String? @map("extra_type")
+  // Extra runs on this ball: a wide or no-ball counts its 1-run penalty
+  // plus anything run; byes/leg-byes are the runs run.
+  extras       Int
+  // "bowled", "caught", "lbw", "run-out", "stumped", "hit-wicket" or
+  // "retired-hurt" (not a wicket — the batter may come back); null = none.
+  wicketType   String? @map("wicket_type")
+  dismissedId  BigInt? @map("dismissed_id")
+  // Catcher, run-out thrower or wicket-keeper.
+  fielderId    BigInt? @map("fielder_id")
+}
+
+type CricketInnings {
+  // 0 or 1: index into the match's teams.
+  battingTeam  Int           @map("batting_team")
+  // Who's in now; null while waiting for the scorer to pick (a new batter
+  // after a wicket, a new bowler after an over).
+  strikerId    BigInt?       @map("striker_id")
+  nonStrikerId BigInt?       @map("non_striker_id")
+  bowlerId     BigInt?       @map("bowler_id")
+  closed       Boolean       @default(false)
+  balls        CricketBall[]
+}
+
+// A playing side in a match — a snapshot of the tournament team's name plus
+// the playing XI chosen for this match.
+type CricketMatchTeam {
+  // Which tournament team this is (index into the tournament's teams), for
+  // the points table.
+  teamIndex Int      @map("team_index")
+  name      String
+  playerIds BigInt[] @map("player_ids")
+}
+
+model CricketMatch {
+  id              BigInt             @id @default(0) @map("_id")
+  tournamentId    BigInt             @map("tournament_id")
+  // Exactly two.
+  teams           CricketMatchTeam[]
+  // Overs per innings.
+  overs           Int
+  scheduledAt     DateTime?          @map("scheduled_at")
+  // The ground; city is kept apart so it can be shown as "ground, city".
+  venue           String?
+  city            String?
+  // Same values as on the tournament, which they're filled in from.
+  matchType       String?            @map("match_type")
+  ballType        String?            @map("ball_type")
+  pitchType       String?            @map("pitch_type")
+  // The round: "league", "group", "quarter-final", "final", ... (see
+  // MATCH_STAGES in cricket-match.controller.ts); null = league.
+  stage           String?
+  // "scheduled", "live", "completed" or "abandoned".
+  status          String             @default("scheduled")
+  // 0 or 1 (index into teams); null until the toss.
+  tossWinner      Int?               @map("toss_winner")
+  // "bat" or "bowl".
+  tossDecision    String?            @map("toss_decision")
+  innings         CricketInnings[]
+  // 0 or 1 when completed with a winner; null for a tie or no result.
+  winner          Int?
+  resultText      String?            @map("result_text")
+  playerOfMatchId BigInt?            @map("player_of_match_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  @@index([tournamentId])
+  @@map("cricket_matches")
 }

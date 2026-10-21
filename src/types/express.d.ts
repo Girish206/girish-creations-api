@@ -1,6 +1,7 @@
 export interface AdminTokenPayload {
   sub: string;
-  email: string;
+  // Null for an account that signs in with its mobile number only.
+  email: string | null;
   name: string | null;
   isOwner: boolean;
   // Effective flag (owner or granted). Missing on tokens issued before it
@@ -9,6 +10,8 @@ export interface AdminTokenPayload {
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
+  // Missing on tokens issued before it existed (= false).
+  hasCricketAccess?: boolean;
 }
 
 declare global {

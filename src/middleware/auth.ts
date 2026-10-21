@@ -66,6 +66,15 @@ export function requireAccountManager(req: Request, _res: Response, next: NextFu
   next();
 }
 
+// Must run after requireAdminAuth. Players with cricket access (their own
+// stats, matches and tournaments) and super admins (who manage it all).
+export function requireCricketAccess(req: Request, _res: Response, next: NextFunction) {
+  if (!isSuperAdmin(req.admin) && !req.admin?.hasCricketAccess) {
+    throw ForbiddenError("No access to the cricket module");
+  }
+  next();
+}
+
 // Must run after requireAdminAuth.
 export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction) {
   if (!isSuperAdmin(req.admin)) {

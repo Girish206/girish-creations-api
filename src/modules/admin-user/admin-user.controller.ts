@@ -3,6 +3,7 @@ import { z } from "zod";
 import * as adminUserService from "./admin-user.service";
 import { parseId } from "../../utils/parseId";
 import { isSuperAdmin } from "../../middleware/auth";
+import { mobileSchema } from "../../utils/mobile";
 
 export async function listAdminUsersHandler(req: Request, res: Response) {
   const items = await adminUserService.listAdminUsers(actingAdmin(req));
@@ -19,13 +20,16 @@ export async function listExpenseMembersHandler(_req: Request, res: Response) {
 const emailSchema = z.string().trim().toLowerCase().email();
 
 const createSchema = z.object({
-  // Omit both for a guest member (listed but can't log in).
+  // Omit email, mobile and password for a guest member (listed but can't
+  // log in). Login needs a password plus an email or a mobile number.
   email: emailSchema.nullable().optional(),
+  mobile: mobileSchema.nullable().optional(),
   password: z.string().min(8).nullable().optional(),
   name: z.string().nullable().optional(),
   hasPortfolioAccess: z.boolean().default(false),
   hasExpensesAccess: z.boolean().default(false),
   hasSavingsAccess: z.boolean().default(false),
+  hasCricketAccess: z.boolean().default(false),
   isSuperAdmin: z.boolean().default(false),
 });
 
@@ -52,12 +56,15 @@ const updateSchema = z.object({
   name: z.string().nullable().optional(),
   // Setting email (+ password, for a guest) grants/changes login access.
   email: emailSchema.optional(),
+  // null clears it.
+  mobile: mobileSchema.nullable().optional(),
   password: z.string().min(8).optional(),
   removeLogin: z.boolean().optional(),
   isActive: z.boolean().optional(),
   hasPortfolioAccess: z.boolean().optional(),
   hasExpensesAccess: z.boolean().optional(),
   hasSavingsAccess: z.boolean().optional(),
+  hasCricketAccess: z.boolean().optional(),
   isSuperAdmin: z.boolean().optional(),
 });
 

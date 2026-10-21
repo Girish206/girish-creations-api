@@ -5,6 +5,7 @@ import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from ".
 const rawSelectFields = {
   id: true,
   email: true,
+  mobile: true,
   name: true,
   isOwner: true,
   isSuperAdmin: true,
@@ -12,6 +13,7 @@ const rawSelectFields = {
   hasPortfolioAccess: true,
   hasExpensesAccess: true,
   hasSavingsAccess: true,
+  hasCricketAccess: true,
   passwordHash: true,
   createdAt: true,
 } as const;
@@ -55,15 +57,21 @@ export interface ActingAdmin {
 }
 
 // A member without super admin may only add people for the Money Hub: no
-// portfolio access, no super admin, and at most the expense/savings access
-// they have themselves.
+// portfolio or cricket access, no super admin, and at most the expense/
+// savings access they have themselves.
 function assertMemberGrant(
   actor: ActingAdmin,
-  flags: { hasPortfolioAccess?: boolean; hasExpensesAccess?: boolean; hasSavingsAccess?: boolean; isSuperAdmin?: boolean },
+  flags: {
+    hasPortfolioAccess?: boolean;
+    hasExpensesAccess?: boolean;
+    hasSavingsAccess?: boolean;
+    hasCricketAccess?: boolean;
+    isSuperAdmin?: boolean;
+  },
 ) {
   if (actor.isSuperAdmin) return;
-  if (flags.hasPortfolioAccess || flags.isSuperAdmin) {
-    throw ForbiddenError("Only super admins can grant portfolio or super admin access");
+  if (flags.hasPortfolioAccess || flags.hasCricketAccess || flags.isSuperAdmin) {
+    throw ForbiddenError("Only super admins can grant portfolio, cricket or super admin access");
   }
   if ((flags.hasExpensesAccess && !actor.hasExpensesAccess) || (flags.hasSavingsAccess && !actor.hasSavingsAccess)) {
     throw ForbiddenError("You can only grant access you have yourself");
@@ -118,24 +126,38 @@ export async function listExpenseMembers() {
   });
 }
 
+// Mobile numbers are unique across accounts (checked here — see schema).
+export async function assertMobileFree(mobile: string, exceptId?: bigint) {
+  const owner = await prisma.adminUser.findFirst({ where: { mobile } });
+  if (owner && owner.id !== exceptId) {
+    throw ConflictError("Another account already uses this mobile number");
+  }
+}
+
 export interface CreateAdminUserInput {
   // Omit both email and password to add a guest — listed as a member but
   // unable to log in. Provide both together to create a full account.
   email?: string | null;
+  mobile?: string | null;
   password?: string | null;
   name?: string | null;
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
+  hasCricketAccess?: boolean;
   isSuperAdmin?: boolean;
 }
 
 export async function createAdminUser(input: CreateAdminUserInput, actor: ActingAdmin) {
   assertMemberGrant(actor, input);
   assertCanSetSuperAdmin(actor, input.isSuperAdmin ? true : undefined);
-  if ((input.email && !input.password) || (!input.email && input.password)) {
-    throw BadRequestError("Provide both an email and a password to grant login access, or neither for a guest member");
+  if (input.password && !input.email && !input.mobile) {
+    throw BadRequestError("Login access needs an email or a mobile number along with the password");
   }
+  if (input.email && !input.password) {
+    throw BadRequestError("Provide a password with the email to grant login access, or leave both out for a guest member");
+  }
+  if (input.mobile) await assertMobileFree(input.mobile);
 
   if (input.email) {
     const existing = await prisma.adminUser.findUnique({ where: { email: input.email } });
@@ -154,11 +176,13 @@ export async function createAdminUser(input: CreateAdminUserInput, actor: Acting
   const created = await prisma.adminUser.create({
     data: {
       email: input.email || null,
+      mobile: input.mobile || null,
       passwordHash,
       name: input.name,
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
+      hasCricketAccess: input.hasCricketAccess ?? false,
       isSuperAdmin: input.isSuperAdmin ?? false,
       createdByAdminUserId: actor.id,
     },
@@ -172,6 +196,7 @@ export interface UpdateAdminUserInput {
   // Set together to grant login access to a guest, or to change a login
   // member's email. Password alone (existing email) just rotates it.
   email?: string;
+  mobile?: string | null;
   password?: string;
   // Turns a login member back into a guest (password cleared, email kept
   // so login can be granted again later with just a new password).
@@ -180,6 +205,7 @@ export interface UpdateAdminUserInput {
   hasPortfolioAccess?: boolean;
   hasExpensesAccess?: boolean;
   hasSavingsAccess?: boolean;
+  hasCricketAccess?: boolean;
   isSuperAdmin?: boolean;
 }
 
@@ -207,10 +233,12 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, a
   }
 
   const nextEmail = input.email ?? existing.email;
+  const nextMobile = input.mobile === undefined ? existing.mobile : input.mobile;
   const nextHasPassword = !input.removeLogin && (input.password !== undefined || existing.passwordHash !== null);
-  if (nextHasPassword && !nextEmail) {
-    throw BadRequestError("An email is required to grant login access");
+  if (nextHasPassword && !nextEmail && !nextMobile) {
+    throw BadRequestError("An email or a mobile number is required to grant login access");
   }
+  if (input.mobile) await assertMobileFree(input.mobile, id);
   if (input.email) {
     const emailOwner = await prisma.adminUser.findUnique({ where: { email: input.email } });
     if (emailOwner && emailOwner.id !== id) {
@@ -228,11 +256,13 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, a
     data: {
       name: input.name,
       email: input.email,
+      mobile: input.mobile,
       passwordHash,
       isActive: input.isActive,
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
+      hasCricketAccess: input.hasCricketAccess,
       isSuperAdmin: existing.isOwner ? undefined : superAdminChange,
     },
     select: rawSelectFields,
