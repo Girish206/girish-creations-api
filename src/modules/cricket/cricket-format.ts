@@ -263,6 +263,10 @@ export async function addFixtures(
     throw BadRequestError("These fixtures are for another phase");
   }
   if (input.groups) {
+    // Started already (by another device, say): don't start it twice.
+    if (phase.groups.some((group) => group.teamIndexes.length > 0)) {
+      throw ConflictError(`${phase.name} has already been scheduled`);
+    }
     if (input.groups.map((g) => g.name).join() !== phase.groups.map((g) => g.name).join()) {
       throw BadRequestError(`${phase.name}'s groups have changed — reload and try again`);
     }
