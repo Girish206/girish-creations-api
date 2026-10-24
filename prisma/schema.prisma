@@ -582,12 +582,19 @@ type CricketBall {
   // Extra runs on this ball: a wide or no-ball counts its 1-run penalty
   // plus anything run; byes/leg-byes are the runs run.
   extras       Int
-  // "bowled", "caught", "lbw", "run-out", "stumped", "hit-wicket" or
-  // "retired-hurt" (not a wicket — the batter may come back); null = none.
+  // How the batter left (WICKET_TYPES in cricket.scoring.ts): "bowled",
+  // "caught", "caught-behind", "lbw", "run-out", "stumped", ... Retired hurt,
+  // retired and absent hurt aren't wickets. Null = none.
   wicketType   String? @map("wicket_type")
   dismissedId  BigInt? @map("dismissed_id")
   // Catcher, run-out thrower or wicket-keeper.
   fielderId    BigInt? @map("fielder_id")
+  // A run-out's second fielder (the one who broke the stumps), when two
+  // were involved; null otherwise.
+  secondFielderId BigInt? @map("second_fielder_id")
+  // An event between deliveries (a retirement, a Mankad, a timed out): no
+  // ball bowled, so it counts for no batter, bowler or over. Null = a ball.
+  noDelivery   Boolean? @map("no_delivery")
   // Where the shot went, when the scorer marks it on the ground: x / y from
   // -1 to 1 with the pitch at the centre, the bowler's end up and (for a
   // right-hander) the off side to the right. shotZone is the fielding
@@ -595,6 +602,8 @@ type CricketBall {
   shotX        Float?  @map("shot_x")
   shotY        Float?  @map("shot_y")
   shotZone     String? @map("shot_zone")
+  // When it was recorded (null on older balls).
+  at           DateTime?
 }
 
 type CricketInnings {
@@ -606,6 +615,9 @@ type CricketInnings {
   nonStrikerId BigInt?       @map("non_striker_id")
   bowlerId     BigInt?       @map("bowler_id")
   closed       Boolean       @default(false)
+  // When it was closed (null while in progress, and on older innings). It
+  // started with its first ball's `at`.
+  closedAt     DateTime?     @map("closed_at")
   balls        CricketBall[]
 }
 

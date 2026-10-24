@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as matchService from "./cricket-match.service";
-import { EXTRA_TYPES, WICKET_TYPES } from "./cricket.scoring";
+import { EXTRA_TYPES, NO_DELIVERY_ALLOWED, NO_DELIVERY_ONLY, WICKET_TYPES } from "./cricket.scoring";
 import { parseId } from "../../utils/parseId";
 import { BadRequestError, ForbiddenError } from "../../utils/httpError";
 import {
@@ -98,6 +98,10 @@ const ballSchema = z
     wicketType: z.enum(WICKET_TYPES).nullable(),
     dismissedId: id.nullable(),
     fielderId: id.nullable(),
+    // A run-out's second fielder; older clients leave it out.
+    secondFielderId: id.nullish().transform((v) => v ?? null),
+    // Between deliveries (no ball bowled); older clients leave it out.
+    noDelivery: z.boolean().nullish().transform((v) => v ?? false),
     // The shot map: all three together, or none.
     shotX: z.number().min(-1).max(1).nullish().transform((v) => v ?? null),
     shotY: z.number().min(-1).max(1).nullish().transform((v) => v ?? null),
@@ -112,12 +116,28 @@ const ballSchema = z
     if (ball.extraType !== null && ball.extraType !== "no-ball" && ball.runs !== 0) {
       issue("No runs off the bat on a wide, bye or leg-bye");
     }
-    const offWide = ["run-out", "stumped", "hit-wicket", "retired-hurt"];
+    const offWide = ["run-out", "stumped", "hit-wicket", "retired-hurt", "obstructing-field"];
     if (ball.extraType === "wide" && ball.wicketType && !offWide.includes(ball.wicketType)) {
       issue("Only a run-out, stumping or hit-wicket can happen off a wide");
     }
-    if (ball.extraType === "no-ball" && ball.wicketType && !["run-out", "retired-hurt"].includes(ball.wicketType)) {
+    if (
+      ball.extraType === "no-ball" &&
+      ball.wicketType &&
+      !["run-out", "retired-hurt", "obstructing-field", "hit-ball-twice"].includes(ball.wicketType)
+    ) {
       issue("Only a run-out can happen off a no-ball");
+    }
+    if (ball.wicketType && NO_DELIVERY_ONLY.includes(ball.wicketType) && !ball.noDelivery) {
+      issue("That's recorded between deliveries");
+    }
+    if (ball.noDelivery) {
+      if (!ball.wicketType || !NO_DELIVERY_ALLOWED.includes(ball.wicketType)) issue("Only a retirement, a Mankad or a timed out can be between deliveries");
+      if (ball.runs !== 0 || ball.extras !== 0 || ball.extraType !== null) issue("No runs between deliveries");
+      if (ball.shotX !== null) issue("No shot between deliveries");
+    }
+    if (ball.secondFielderId !== null) {
+      if (ball.wicketType !== "run-out") issue("Only a run-out has a second fielder");
+      else if (ball.fielderId === null || ball.fielderId === ball.secondFielderId) issue("Pick two different fielders");
     }
     if ([ball.shotX, ball.shotY, ball.shotZone].some((v) => v === null) && (ball.shotX ?? ball.shotY ?? ball.shotZone) !== null) {
       issue("A shot needs its position and zone");

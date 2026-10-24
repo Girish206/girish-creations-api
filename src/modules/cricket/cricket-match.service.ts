@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { CricketBall, CricketInnings, CricketMatch } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, NotFoundError } from "../../utils/httpError";
-import { inningsSummary, isLegal, isWicket, runsRun } from "./cricket.scoring";
+import { cantBat, INCOMING_OUTS, inningsSummary, isLegal, runsRun } from "./cricket.scoring";
 import { assertRoles, matchAccessOf, rolesWithin, type TeamRoles } from "./cricket.service";
 
 const newTeamKey = () => `f:${randomUUID()}`;
@@ -64,6 +64,8 @@ export interface BallInput {
   wicketType: string | null;
   dismissedId: bigint | null;
   fielderId: bigint | null;
+  secondFielderId: bigint | null;
+  noDelivery: boolean;
   shotX: number | null;
   shotY: number | null;
   shotZone: string | null;
@@ -223,6 +225,7 @@ const newInnings = (battingTeam: number): CricketInnings => ({
   nonStrikerId: null,
   bowlerId: null,
   closed: false,
+  closedAt: null,
   balls: [],
 });
 
@@ -354,7 +357,7 @@ function liveInnings(match: CricketMatch) {
 }
 
 const outBatters = (innings: CricketInnings) =>
-  new Set(innings.balls.filter(isWicket).map((ball) => ball.dismissedId));
+  new Set(innings.balls.filter(cantBat).map((ball) => ball.dismissedId));
 
 // Picks openers, the next batter after a wicket, or the bowler for a new
 // over. Fields left undefined stay as they are.
@@ -417,6 +420,7 @@ function completeMatch(match: CricketMatch) {
 // Closes the current innings; after the first, the other side bats next.
 function closeInnings(match: CricketMatch, innings: CricketInnings) {
   innings.closed = true;
+  innings.closedAt = new Date();
   innings.strikerId = null;
   innings.nonStrikerId = null;
   innings.bowlerId = null;
@@ -445,30 +449,53 @@ const saveMatch = (match: CricketMatch) =>
 export async function addBall(id: bigint, input: BallInput) {
   const match = await getMatchOrThrow(id);
   const innings = liveInnings(match);
-  const { strikerId, nonStrikerId, bowlerId } = innings;
-  if (strikerId === null || nonStrikerId === null || bowlerId === null) {
-    throw BadRequestError("Pick both batters and the bowler first");
-  }
-  if (input.wicketType) {
-    const runOut = input.wicketType === "run-out" || input.wicketType === "retired-hurt";
-    const allowed = runOut ? [strikerId, nonStrikerId] : [strikerId];
-    if (input.dismissedId === null || !allowed.includes(input.dismissedId)) {
-      throw BadRequestError(runOut ? "Choose which batter is out" : "Only the striker can be out this way");
+  const { strikerId, nonStrikerId } = innings;
+  // Timed out / absent hurt: the next batter, before they're in — so a
+  // crease (or, at an over's end, the bowler) can still be empty.
+  const incoming = input.wicketType !== null && INCOMING_OUTS.includes(input.wicketType);
+  const bowlerId = innings.bowlerId ?? (incoming ? (innings.balls[innings.balls.length - 1]?.bowlerId ?? null) : null);
+  if (incoming) {
+    if (bowlerId === null) throw BadRequestError("Pick the bowler first");
+    if (strikerId !== null && nonStrikerId !== null) throw BadRequestError("Both batters are already in");
+    const dismissed = input.dismissedId;
+    if (
+      dismissed === null ||
+      !match.teams[innings.battingTeam].playerIds.includes(dismissed) ||
+      outBatters(innings).has(dismissed) ||
+      dismissed === strikerId ||
+      dismissed === nonStrikerId
+    ) {
+      throw BadRequestError("Choose a batter yet to come in");
+    }
+  } else {
+    if (strikerId === null || nonStrikerId === null || bowlerId === null) {
+      throw BadRequestError("Pick both batters and the bowler first");
+    }
+    if (input.wicketType) {
+      const either = ["run-out", "retired-hurt", "retired", "retired-out", "obstructing-field"].includes(input.wicketType);
+      const allowed = either ? [strikerId, nonStrikerId] : [strikerId];
+      if (input.dismissedId === null || !allowed.includes(input.dismissedId)) {
+        throw BadRequestError(either ? "Choose which batter" : "Only the striker can be out this way");
+      }
     }
   }
   const ball: CricketBall = {
-    batterId: strikerId,
-    nonStrikerId,
-    bowlerId,
+    // An incoming batter's dismissal is theirs alone; the crease is as it was.
+    batterId: incoming ? input.dismissedId! : strikerId!,
+    nonStrikerId: incoming ? (strikerId ?? nonStrikerId ?? input.dismissedId!) : nonStrikerId!,
+    bowlerId: bowlerId!,
     runs: input.runs,
     extraType: input.extraType,
     extras: input.extras,
     wicketType: input.wicketType,
     dismissedId: input.wicketType ? input.dismissedId : null,
     fielderId: input.wicketType ? input.fielderId : null,
+    secondFielderId: input.wicketType === "run-out" ? input.secondFielderId : null,
+    noDelivery: input.noDelivery || null,
     shotX: input.shotX,
     shotY: input.shotY,
     shotZone: input.shotZone,
+    at: new Date(),
   };
   innings.balls.push(ball);
 
@@ -509,9 +536,14 @@ export async function undoBall(id: bigint) {
     throw BadRequestError("No balls bowled yet");
   }
   innings.closed = false;
-  innings.strikerId = ball.batterId;
-  innings.nonStrikerId = ball.nonStrikerId;
-  innings.bowlerId = ball.bowlerId;
+  innings.closedAt = null;
+  // A timed out / absent hurt left the crease as it was; anything else puts
+  // back who was in for it.
+  if (!(ball.wicketType && INCOMING_OUTS.includes(ball.wicketType))) {
+    innings.strikerId = ball.batterId;
+    innings.nonStrikerId = ball.nonStrikerId;
+    innings.bowlerId = ball.bowlerId;
+  }
   match.status = "live";
   match.winner = null;
   match.resultText = null;
