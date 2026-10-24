@@ -681,16 +681,22 @@ export async function setSquad(id: bigint, playerIds: bigint[]) {
 // distinct squad players, and no player may appear in two sets.
 export async function setMatchSets(id: bigint, sets: bigint[][]) {
   const tournament = await getTournamentOrThrow(id);
-  const teamCount = tournament.teams.length;
+  // Sets are dealt out over the generated teams only; players already on a
+  // hand-built team stay there.
+  const teamCount = tournament.teams.filter((team) => !team.manual).length;
   const inSquad = new Set(tournament.playerIds);
+  const onManualTeam = new Set(tournament.teams.filter((team) => team.manual).flatMap((team) => team.playerIds));
   const seen = new Set<bigint>();
   for (const set of sets) {
     if (set.length > teamCount) {
-      throw BadRequestError(`A matched set can hold at most ${teamCount} players (one per team)`);
+      throw BadRequestError(`A matched set can hold at most ${teamCount} players (one per generated team)`);
     }
     for (const playerId of set) {
       if (!inSquad.has(playerId)) {
         throw BadRequestError("Only players in the tournament's squad can be matched");
+      }
+      if (onManualTeam.has(playerId)) {
+        throw BadRequestError("Players on a hand-built team can't be matched");
       }
       if (seen.has(playerId)) {
         throw BadRequestError("A player can only be in one matched set");
@@ -722,17 +728,26 @@ export async function generateTeams(id: bigint) {
   if (tournament.matchSets.length === 0) {
     throw BadRequestError("Match some players into sets before generating teams");
   }
-  const rosters: bigint[][] = tournament.teams.map(() => []);
+  // Only the generated teams are (re)filled; hand-built ones keep their
+  // players, who are left out of the deal.
+  const generated = tournament.teams.flatMap((team, index) => (team.manual ? [] : [index]));
+  if (generated.length < 2) {
+    throw BadRequestError("Generating needs at least two generated teams");
+  }
+  const onManualTeam = new Set(tournament.teams.filter((team) => team.manual).flatMap((team) => team.playerIds));
+  const rosters = new Map<number, bigint[]>(generated.map((index) => [index, []]));
+  const rosterOf = (index: number) => rosters.get(index)!;
   for (const set of tournament.matchSets) {
-    const targets = shuffle(rosters.map((_, index) => index))
-      .sort((a, b) => rosters[a].length - rosters[b].length)
-      .slice(0, set.playerIds.length);
-    shuffle(set.playerIds).forEach((playerId, index) => rosters[targets[index]].push(playerId));
+    const playerIds = set.playerIds.filter((playerId) => !onManualTeam.has(playerId));
+    const targets = shuffle(generated)
+      .sort((a, b) => rosterOf(a).length - rosterOf(b).length)
+      .slice(0, playerIds.length);
+    shuffle(playerIds).forEach((playerId, index) => rosterOf(targets[index]).push(playerId));
   }
   return prisma.cricketTournament.update({
     where: { id },
     data: {
-      teams: tournament.teams.map((team, index) => withRoster(team, rosters[index])),
+      teams: tournament.teams.map((team, index) => (team.manual ? team : withRoster(team, rosterOf(index)))),
       generatedAt: new Date(),
     },
   });
@@ -761,8 +776,8 @@ export function assertRoles(roles: TeamRoles, playerIds: bigint[]) {
 
 // A team with a new roster: its captain / vice-captain / keeper stay only if
 // they're still on it.
-function withRoster(team: { name: string } & TeamRoles, playerIds: bigint[]) {
-  return { name: team.name, playerIds, ...rolesWithin(team, playerIds) };
+function withRoster(team: { name: string; manual?: boolean | null } & TeamRoles, playerIds: bigint[]) {
+  return { name: team.name, playerIds, ...rolesWithin(team, playerIds), ...(team.manual ? { manual: true } : {}) };
 }
 
 function findTeamIndex(teams: { playerIds: bigint[] }[], playerId: bigint) {
@@ -819,22 +834,26 @@ export async function movePlayer(id: bigint, playerId: bigint, toTeamIndex: numb
 // or copied from another tournament. A match refers to its teams by index,
 // so new teams are appended, and removing one shifts later matches up.
 
-export const MAX_TEAMS = 8;
+export const MAX_TEAMS = 16;
 
 // Roles left out keep the team's current ones (cleared if they leave it).
 export interface CricketTeamInput extends TeamRoles {
   name: string;
   playerIds: bigint[];
+  // Built by hand; left out on an edit keeps the team's current value.
+  manual?: boolean | null;
 }
 
 // The stored team for this input, on top of the existing one if any.
-function teamFrom(input: CricketTeamInput, existing?: TeamRoles) {
+function teamFrom(input: CricketTeamInput, existing?: TeamRoles & { manual?: boolean | null }) {
   const playerIds = [...new Set(input.playerIds)];
   const pick = (key: keyof TeamRoles) => (input[key] !== undefined ? input[key] : existing?.[key]);
+  const manual = input.manual ?? existing?.manual;
   return {
     name: input.name,
     playerIds,
     ...rolesWithin({ captainId: pick("captainId"), viceCaptainId: pick("viceCaptainId"), keeperId: pick("keeperId") }, playerIds),
+    ...(manual ? { manual: true } : {}),
   };
 }
 
@@ -986,6 +1005,10 @@ export async function removeTeam(id: bigint, index: number) {
   const matches = await prisma.cricketMatch.findMany({ where: { tournamentId: id } });
   if (matches.some((match) => match.teams.some((team) => team.teamIndex === index))) {
     throw ConflictError("This team has matches — delete those first");
+  }
+  // The format refers to teams by index; it's rebuilt for the new line-up.
+  if (tournament.format) {
+    throw ConflictError("This tournament has a format — remove it on the Standings tab first");
   }
   const teams = tournament.teams.filter((_, i) => i !== index);
   for (const match of matches.filter((m) => m.teams.some((team) => team.teamIndex > index))) {

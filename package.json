@@ -11,7 +11,8 @@
     "import:mysql": "tsx prisma/import-mysql.ts",
     "seed:categories": "tsx prisma/seed-expense-categories.ts",
     "migrate:link-profiles": "tsx prisma/link-profiles.ts",
-    "migrate:dedupe-profiles": "tsx prisma/dedupe-profiles.ts"
+    "migrate:dedupe-profiles": "tsx prisma/dedupe-profiles.ts",
+    "migrate:mark-manual-teams": "tsx prisma/mark-manual-teams.ts"
   },
   "keywords": [],
   "author": "",

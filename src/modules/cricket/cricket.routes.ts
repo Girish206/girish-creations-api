@@ -10,6 +10,9 @@ import {
   addFriendlyTeamPlayersHandler,
   listTeamPlayersHandler,
   addTeamsHandler,
+  addFixturesHandler,
+  clearFormatHandler,
+  setFormatHandler,
   lookupPlayerHandler,
   lookupTeamPlayerHandler,
   createPlayerHandler,
@@ -157,6 +160,9 @@ cricketAdminRouter.put("/tournaments/:id/teams/:index", manageTournament, asyncH
 cricketAdminRouter.put("/tournaments/:id/teams/:index/roles", manageTournament, asyncHandler(setTeamRolesHandler));
 cricketAdminRouter.delete("/tournaments/:id/teams/:index", manageTournament, asyncHandler(removeTeamHandler));
 cricketAdminRouter.put("/tournaments/:id/scorers", manageTournament, asyncHandler(setTournamentScorersHandler));
+cricketAdminRouter.put("/tournaments/:id/format", manageTournament, asyncHandler(setFormatHandler));
+cricketAdminRouter.delete("/tournaments/:id/format", manageTournament, asyncHandler(clearFormatHandler));
+cricketAdminRouter.post("/tournaments/:id/fixtures", manageTournament, asyncHandler(addFixturesHandler));
 
 cricketAdminRouter.post("/matches", asyncHandler(createMatchHandler));
 cricketAdminRouter.put("/matches/:id", scoreMatch, asyncHandler(updateMatchHandler));

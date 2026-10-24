@@ -512,6 +512,10 @@ type CricketTeam {
   captainId     BigInt?  @map("captain_id")
   viceCaptainId BigInt?  @map("vice_captain_id")
   keeperId      BigInt?  @map("keeper_id")
+  // Built by hand or copied from another tournament (true), as opposed to
+  // generated from matched sets (unset). Generating only fills the generated
+  // teams and leaves these as they are.
+  manual        Boolean?
 }
 
 // Teams and matched sets are embedded so a generate or a swap is a single
@@ -551,6 +555,10 @@ model CricketTournament {
   matchType       String?           @map("match_type")
   // Default overs per innings for its matches.
   overs           Int?
+  // How it's played: its phases (league, groups, super league, playoffs,
+  // series) as the client's CricketFormat, checked by cricket-format.ts.
+  // Null = not set up (every match counts towards one points table).
+  format          Json?
   // Players the organiser lets score (and edit) every match in it.
   scorerIds       BigInt[]          @map("scorer_ids")
   // The account that created it; it (and super admins) manage it. Null for
@@ -641,6 +649,12 @@ model CricketMatch {
   // The round: "league", "group", "quarter-final", "final", ... (see
   // MATCH_STAGES in cricket-match.controller.ts); null = league.
   stage           String?
+  // Its place in the tournament's format: the phase's id, its group ("A")
+  // and its knockout or series slot ("Q1", "F", "M2"). Null on matches
+  // scheduled by hand.
+  phaseId         String?            @map("phase_id")
+  group           String?
+  slot            String?
   // "scheduled", "live", "completed" or "abandoned".
   status          String             @default("scheduled")
   // 0 or 1 (index into teams); null until the toss.

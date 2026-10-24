@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as cricketService from "./cricket.service";
+import * as formatService from "./cricket-format";
 import { parseId } from "../../utils/parseId";
 import { mobileSchema } from "../../utils/mobile";
 import { isSuperAdmin } from "../../middleware/auth";
@@ -110,6 +111,8 @@ const teamSchema = z.object({
   captainId: playerId.nullish(),
   viceCaptainId: playerId.nullish(),
   keeperId: playerId.nullish(),
+  // Built by hand (left out = generated, or keep it as it is when editing).
+  manual: z.boolean().optional(),
 });
 
 const teamRolesSchema = z.object({
@@ -319,4 +322,20 @@ export async function setTournamentScorersHandler(req: Request, res: Response) {
 
 export async function removeTeamHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.removeTeam(parseId(req.params.id), teamIndex(req)) });
+}
+
+// The format (phases, groups, bracket) with its first fixtures.
+export async function setFormatHandler(req: Request, res: Response) {
+  const { format, fixtures } = formatService.setFormatSchema.parse(req.body);
+  res.json({ data: await formatService.setFormat(parseId(req.params.id), format, fixtures, viewerOf(req).adminId) });
+}
+
+// A later phase's groups and fixtures, or the next bracket match.
+export async function addFixturesHandler(req: Request, res: Response) {
+  const input = formatService.addFixturesSchema.parse(req.body);
+  res.status(201).json({ data: await formatService.addFixtures(parseId(req.params.id), input, viewerOf(req).adminId) });
+}
+
+export async function clearFormatHandler(req: Request, res: Response) {
+  res.json({ data: await formatService.clearFormat(parseId(req.params.id)) });
 }
