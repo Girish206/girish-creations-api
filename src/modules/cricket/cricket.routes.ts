@@ -27,6 +27,7 @@ import {
   playerCareerHandler,
   revokePlayerLoginHandler,
   setMyPhotoHandler,
+  signInLookupHandler,
   signUpHandler,
   updateMyProfileHandler,
   listPlayersHandler,
@@ -67,8 +68,10 @@ import {
 } from "./cricket-match.controller";
 import { followCountsHandler, followHandler, listMyFollowsHandler, unfollowHandler } from "./cricket-follow.controller";
 
-// Public sign-up for players (mounted outside the signed-in router).
+// Public sign-in lookup and sign-up for players (mounted outside the
+// signed-in router).
 export const cricketPublicRouter = Router();
+cricketPublicRouter.post("/sign-in/lookup", asyncHandler(signInLookupHandler));
 cricketPublicRouter.post("/register", asyncHandler(signUpHandler));
 
 // Players with cricket access read their own stats, matches and

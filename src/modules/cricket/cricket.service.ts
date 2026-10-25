@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 import { assertMobileFree } from "../admin-user/admin-user.service";
 import { deleteUploadedFile, uploadFile } from "../../middleware/upload";
+import { normalizeMobile } from "../../utils/mobile";
 
 // ===== Players =====
 
@@ -181,6 +182,31 @@ export interface CricketSignUpInput {
   password: string;
 }
 
+// The sign-in screen's first step: from the mobile number or email typed,
+// which step comes next. "password" for an account that signs in already,
+// "setPassword" for a number an organiser added (or a guest account) with
+// no password yet, "register" for a new number. An email can't sign up.
+export type SignInStep = "password" | "setPassword" | "register";
+
+export async function lookupSignIn(identifier: string): Promise<{ step: SignInStep; name: string | null }> {
+  if (identifier.includes("@")) {
+    const account = await prisma.adminUser.findUnique({ where: { email: identifier.toLowerCase() } });
+    if (!account) throw NotFoundError("No account uses this email. Use your mobile number to create one.");
+    return { step: "password", name: null };
+  }
+  const mobile = normalizeMobile(identifier);
+  if (!mobile) throw BadRequestError("Enter a valid 10-digit mobile number or your email");
+
+  // Same rules as signUp: an inactive or passworded account signs in.
+  const account = await accountForMobile(mobile);
+  if (account && (account.passwordHash !== null || !account.isActive)) {
+    return { step: "password", name: null };
+  }
+  const player = await prisma.cricketPlayer.findFirst({ where: { mobile } });
+  const name = player?.name ?? account?.name ?? null;
+  return { step: name ? "setPassword" : "register", name };
+}
+
 // Anyone can create a player account with their name, mobile number and a
 // password. If an organiser already added them (same mobile), the account
 // links to that player; otherwise a new player joins the pool. An account
@@ -192,7 +218,7 @@ export async function signUp(input: CricketSignUpInput) {
     throw ConflictError("An account with this mobile number already exists. Sign in instead.");
   }
   const player = await prisma.cricketPlayer.findFirst({ where: { mobile: input.mobile } });
-  const name = input.name ?? player?.name;
+  const name = input.name ?? player?.name ?? existing?.name;
   if (!name) throw BadRequestError("Enter your name");
   const passwordHash = await bcrypt.hash(input.password, 10);
   const account = existing

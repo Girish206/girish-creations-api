@@ -129,6 +129,12 @@ export async function listPlayersHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.listPlayers(viewerOf(req).isSuperAdmin) });
 }
 
+// Public: the sign-in screen's "Next" — which step this number/email gets.
+export async function signInLookupHandler(req: Request, res: Response) {
+  const { identifier } = z.object({ identifier: z.string().trim().min(1).max(200) }).parse(req.body);
+  res.json({ data: await cricketService.lookupSignIn(identifier) });
+}
+
 // Public: creates the account and signs straight in (a remembered session).
 export async function signUpHandler(req: Request, res: Response) {
   const account = await cricketService.signUp(signUpSchema.parse(req.body));
