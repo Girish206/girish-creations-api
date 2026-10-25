@@ -10,7 +10,7 @@ import { inningsSummary, oversText } from "./cricket.scoring";
 // page here, and this answers with a tiny page carrying that page's title,
 // description and picture. People still get the app.
 
-const SITE = "Namma Aaata · ನಮ್ಮ ಆಟ";
+const SITE = "CricDesk";
 const DEFAULT_TITLE = SITE;
 const DEFAULT_DESCRIPTION =
   "Run your cricket tournaments: squads, balanced teams, ball-by-ball live scoring, scorecards and leaderboards.";
