@@ -15,7 +15,7 @@ const DEFAULT_TITLE = SITE;
 const DEFAULT_DESCRIPTION =
   "Run your cricket tournaments: squads, balanced teams, ball-by-ball live scoring, scorecards and leaderboards.";
 // In the client's public/ folder.
-const DEFAULT_IMAGE = "/og-image.jpg";
+const DEFAULT_IMAGE = "/og-image.jpg?v=2";
 const TIME_ZONE = "Asia/Kolkata";
 
 interface Preview {
