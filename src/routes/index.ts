@@ -23,6 +23,7 @@ import { expenseGroupAdminRouter } from "../modules/expense-group/expense-group.
 import { expenseAdminRouter } from "../modules/expense/expense.routes";
 import { savingsGoalAdminRouter } from "../modules/savings-goal/savings-goal.routes";
 import { cricketAdminRouter, cricketPublicRouter } from "../modules/cricket/cricket.routes";
+import { cricketPreviewHandler } from "../modules/cricket/cricket-preview";
 
 // Read-only portfolio endpoints. Each handler reads the portfolio a request
 // is about from req.portfolioProfileId, so the same router serves a visitor
@@ -45,6 +46,8 @@ export const publicRouter = Router();
 publicRouter.get("/portfolios", asyncHandler(listPortfoliosHandler));
 publicRouter.use("/portfolios/:username", asyncHandler(resolvePublicPortfolio), publicPortfolioRouter);
 publicRouter.use("/files", filePublicRouter);
+// Link-preview cards for shared Crickverse links (see cricket-preview.ts).
+publicRouter.get("/cricket-preview", asyncHandler(cricketPreviewHandler));
 
 // Signed-in account with portfolio access, scoped to its own portfolio.
 const ownPortfolio = [requireAdminAuth, requireModuleAccess("portfolio"), asyncHandler(resolveOwnPortfolio)];
