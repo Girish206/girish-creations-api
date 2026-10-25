@@ -169,6 +169,25 @@ export async function getMatchHandler(req: Request, res: Response) {
   res.json({ data: match });
 }
 
+// A live match page asks this every few seconds instead of the whole match:
+// everything but the balls it already has. `known` is how many balls of each
+// innings it holds ("12,0"); each innings comes back with `fromBall` and only
+// the balls from there on. The last over it has is always sent again, so an
+// undo (or an undo and a new ball) between two asks still comes through.
+const RESEND_BALLS = 6;
+export async function matchLiveHandler(req: Request, res: Response) {
+  const match = await matchService.getMatch(parseId(req.params.id));
+  await assertCanViewMatch(match, viewerOf(req));
+  const known = String(req.query.known ?? "")
+    .split(",")
+    .map((n) => Number(n) || 0);
+  const innings = match.innings.map((inn, i) => {
+    const fromBall = Math.max(0, Math.min(known[i] ?? 0, inn.balls.length) - RESEND_BALLS);
+    return { ...inn, fromBall, balls: inn.balls.slice(fromBall) };
+  });
+  res.json({ data: { ...match, innings } });
+}
+
 // Anyone can make a standalone match; one in a tournament needs its organiser.
 export async function createMatchHandler(req: Request, res: Response) {
   const input = createMatchSchema.parse(req.body);

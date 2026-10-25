@@ -54,6 +54,7 @@ import {
   deleteMatchHandler,
   endInningsHandler,
   getMatchHandler,
+  matchLiveHandler,
   handOverScoringHandler,
   listMatchesHandler,
   listPlacesHandler,
@@ -67,6 +68,14 @@ import {
   updateMatchHandler,
 } from "./cricket-match.controller";
 import { followCountsHandler, followHandler, listMyFollowsHandler, unfollowHandler } from "./cricket-follow.controller";
+import {
+  addSavedTeamPlayersHandler,
+  createSavedTeamHandler,
+  deleteSavedTeamHandler,
+  getSavedTeamHandler,
+  setSavedTeamRolesHandler,
+  updateSavedTeamHandler,
+} from "./cricket-team.controller";
 
 // Public sign-in lookup and sign-up for players (mounted outside the
 // signed-in router).
@@ -114,6 +123,7 @@ cricketAdminRouter.post("/follows", asyncHandler(followHandler));
 cricketAdminRouter.delete("/follows", asyncHandler(unfollowHandler));
 cricketAdminRouter.get("/matches", asyncHandler(listMatchesHandler));
 cricketAdminRouter.get("/matches/:id", asyncHandler(getMatchHandler));
+cricketAdminRouter.get("/matches/:id/live", asyncHandler(matchLiveHandler));
 // Grounds and cities already used, suggested on the match / tournament forms.
 cricketAdminRouter.get("/places", asyncHandler(listPlacesHandler));
 // A team's captain adds players to it (the service checks who's asking).
@@ -123,6 +133,14 @@ cricketAdminRouter.post("/tournaments/:id/teams/:index/players", asyncHandler(ad
 // Everyone in a team (?key=, see effectiveTeamKey), for a one-off side's squad picker.
 cricketAdminRouter.get("/teams/players", asyncHandler(listTeamPlayersHandler));
 cricketAdminRouter.post("/friendly-teams/players", asyncHandler(addFriendlyTeamPlayersHandler));
+// Teams made outside any tournament: anyone can create one; its creator,
+// its captain and super admins change it (the service checks who's asking).
+cricketAdminRouter.post("/saved-teams", asyncHandler(createSavedTeamHandler));
+cricketAdminRouter.get("/saved-teams/:id", asyncHandler(getSavedTeamHandler));
+cricketAdminRouter.put("/saved-teams/:id", asyncHandler(updateSavedTeamHandler));
+cricketAdminRouter.put("/saved-teams/:id/roles", asyncHandler(setSavedTeamRolesHandler));
+cricketAdminRouter.post("/saved-teams/:id/players", asyncHandler(addSavedTeamPlayersHandler));
+cricketAdminRouter.delete("/saved-teams/:id", asyncHandler(deleteSavedTeamHandler));
 
 // A one-off match's captain, found by mobile before adding them.
 cricketAdminRouter.get("/players/lookup", asyncHandler(lookupPlayerHandler));

@@ -695,3 +695,21 @@ model CricketMatch {
   @@index([tournamentId])
   @@map("cricket_matches")
 }
+
+// A team made outside any tournament ("Create team"): its name, players and
+// leaders. One-off matches that pick it carry its teamKey ("f:<uuid>", like
+// any friendly team), and their side starts with its players and leaders.
+// Its creator, its captain and super admins manage it.
+model CricketSavedTeam {
+  id            BigInt   @id @default(0) @map("_id")
+  teamKey       String   @map("team_key")
+  name          String
+  playerIds     BigInt[] @map("player_ids")
+  captainId     BigInt?  @map("captain_id")
+  viceCaptainId BigInt?  @map("vice_captain_id")
+  keeperId      BigInt?  @map("keeper_id")
+  createdById   BigInt   @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("cricket_saved_teams")
+}

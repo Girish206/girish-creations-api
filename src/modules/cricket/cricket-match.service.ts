@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, NotFoundError } from "../../utils/httpError";
 import { cantBat, INCOMING_OUTS, inningsSummary, isLegal, runsRun } from "./cricket.scoring";
 import { assertRoles, matchAccessOf, rolesWithin, type TeamRoles } from "./cricket.service";
+import { savedTeamByKey } from "./cricket-team.service";
 
 const newTeamKey = () => `f:${randomUUID()}`;
 
@@ -137,15 +138,35 @@ async function matchTeamsFor(input: CricketMatchInput) {
     if (keys[0] !== null && keys[0] === keys[1]) {
       throw BadRequestError("Pick two different teams");
     }
-    return [nameA, nameB].map((name, teamIndex) => ({
-      teamIndex,
-      name,
-      teamKey: keys[teamIndex] ?? newTeamKey(),
-      playerIds: captains[teamIndex] === null ? [] : [captains[teamIndex]!],
-      captainId: captains[teamIndex],
-      viceCaptainId: null,
-      keeperId: null,
-    }));
+    // A side picked from a saved team starts with its players and leaders.
+    const saved = await Promise.all(keys.map((key) => (key?.startsWith("f:") ? savedTeamByKey(key) : null)));
+    const shared = saved[0] && saved[1] ? saved[0].playerIds.filter((id) => saved[1]!.playerIds.includes(id)) : [];
+    if (shared.length) throw BadRequestError("These two teams share players — pick another team");
+    return [nameA, nameB].map((name, teamIndex) => {
+      const team = saved[teamIndex];
+      const captainId = captains[teamIndex];
+      if (team) {
+        const playerIds = captainId !== null && !team.playerIds.includes(captainId) ? [...team.playerIds, captainId] : team.playerIds;
+        return {
+          teamIndex,
+          name,
+          teamKey: team.teamKey,
+          playerIds,
+          captainId: captainId ?? team.captainId,
+          viceCaptainId: team.viceCaptainId,
+          keeperId: team.keeperId,
+        };
+      }
+      return {
+        teamIndex,
+        name,
+        teamKey: keys[teamIndex] ?? newTeamKey(),
+        playerIds: captainId === null ? [] : [captainId],
+        captainId,
+        viceCaptainId: null,
+        keeperId: null,
+      };
+    });
   }
   const tournament = await prisma.cricketTournament.findUnique({ where: { id: input.tournamentId } });
   if (!tournament) {

@@ -329,6 +329,7 @@ export async function getMe(adminId: bigint) {
       followedPlayerMatches: [],
       scoringTournaments: [],
       scoringMatches: [],
+      savedTeams: await prisma.cricketSavedTeam.findMany({ where: { createdById: adminId }, orderBy: { createdAt: "desc" } }),
     };
   }
   const allFollows = await prisma.cricketFollow.findMany({ where: { followerId: player.id } });
@@ -390,6 +391,11 @@ export async function getMe(adminId: bigint) {
     createdMatches,
     scoringTournaments,
     scoringMatches,
+    // Teams made outside a tournament that they created or play for.
+    savedTeams: await prisma.cricketSavedTeam.findMany({
+      where: { OR: [{ createdById: adminId }, { playerIds: { has: player.id } }] },
+      orderBy: { createdAt: "desc" },
+    }),
   };
 }
 
@@ -562,10 +568,15 @@ export async function deletePlayer(id: bigint) {
         { teams: { some: { playerIds: { has: id } } } },
       ],
     },
-    select: { name: true },
+    select: { name: true, teams: true },
   });
   if (inUse) {
-    throw ConflictError(`This player is part of the "${inUse.name}" tournament — remove them from it first`);
+    const team = inUse.teams.find((t) => t.playerIds.includes(id));
+    throw ConflictError(
+      team
+        ? `This player is on ${team.name} in the "${inUse.name}" tournament — remove them from it first`
+        : `This player is still in the squad of the "${inUse.name}" tournament — remove them from the tournament first`,
+    );
   }
   const playedIn = await prisma.cricketMatch.count({ where: { teams: { some: { playerIds: { has: id } } } } });
   if (playedIn > 0) {
@@ -696,6 +707,11 @@ export async function setSquad(id: bigint, playerIds: bigint[]) {
     where: { id },
     data: {
       playerIds: squad,
+      // Anyone taken out of the squad leaves their team too (and any
+      // captain / vice-captain / keeper role on it).
+      teams: tournament.teams.map((team) =>
+        teamFrom({ ...team, playerIds: team.playerIds.filter((playerId) => inSquad.has(playerId)) }, team),
+      ),
       matchSets: tournament.matchSets
         .map((set) => ({ playerIds: set.playerIds.filter((playerId) => inSquad.has(playerId)) }))
         .filter((set) => set.playerIds.length > 0),
@@ -1089,14 +1105,19 @@ export function effectiveTeamKey(
   return side.teamKey ?? `legacy:${match.createdById ?? 0}:${side.name.trim().toLowerCase()}`;
 }
 
-// A team's roster by its key: the tournament team's players, plus everyone
-// who has played (or is down to play) for it in any match.
+// A team's roster by its key: the tournament or saved team's players, plus
+// everyone who has played (or is down to play) for it in any match.
 export async function listTeamPlayers(key: string) {
   const ids: bigint[] = [];
   const tournamentTeam = /^t:(\d+):(\d+)$/.exec(key);
   if (tournamentTeam) {
     const tournament = await prisma.cricketTournament.findUnique({ where: { id: BigInt(tournamentTeam[1]) } });
     ids.push(...(tournament?.teams[Number(tournamentTeam[2])]?.playerIds ?? []));
+  }
+  // A saved team's own players come first.
+  if (key.startsWith("f:")) {
+    const saved = await prisma.cricketSavedTeam.findFirst({ where: { teamKey: key } });
+    ids.push(...(saved?.playerIds ?? []));
   }
   const matches = await prisma.cricketMatch.findMany({
     select: { tournamentId: true, createdById: true, teams: true },
