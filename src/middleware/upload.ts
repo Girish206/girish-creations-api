@@ -1,4 +1,5 @@
 import multer from "multer";
+import { compressImage } from "../lib/compressImage";
 import { prisma } from "../lib/prisma";
 
 // Vercel rejects any request body over 4.5MB before it reaches this code
@@ -16,13 +17,15 @@ export const FILE_URL_PREFIX = "/api/files/";
 // Stores a multer-buffered file in the database and returns the path it's
 // served from (GET /api/files/:id) — that path is what gets saved on the
 // referencing record (profile picture, signature, project image).
+// Images are compressed first (see lib/compressImage).
 export async function uploadFile(file: Express.Multer.File): Promise<string> {
+  const compressed = await compressImage(file.buffer, file.mimetype, file.originalname);
   const stored = await prisma.storedFile.create({
     data: {
-      filename: file.originalname,
-      contentType: file.mimetype,
-      size: file.size,
-      data: new Uint8Array(file.buffer),
+      filename: compressed?.filename ?? file.originalname,
+      contentType: compressed?.contentType ?? file.mimetype,
+      size: compressed?.size ?? file.size,
+      data: new Uint8Array(compressed?.data ?? file.buffer),
     },
     select: { id: true },
   });
