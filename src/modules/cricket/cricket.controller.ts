@@ -6,6 +6,8 @@ import { parseId } from "../../utils/parseId";
 import { mobileSchema } from "../../utils/mobile";
 import { isSuperAdmin } from "../../middleware/auth";
 import { issueToken } from "../auth/auth.service";
+import { NotFoundError } from "../../utils/httpError";
+import { playerQrToken, teamRows } from "./cricket-qr";
 
 // Who's asking: super admins see everything, players only their own.
 export const viewerOf = (req: Request) => ({ adminId: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) });
@@ -166,6 +168,14 @@ export async function meHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.getMe(viewerOf(req).adminId) });
 }
 
+// The signed-in player's QR code token (My QR code), refreshed by the app
+// while it's shown.
+export async function myQrHandler(req: Request, res: Response) {
+  const me = await cricketService.findMyPlayer(viewerOf(req).adminId);
+  if (!me) throw NotFoundError("Only players have a QR code");
+  res.json({ data: { playerId: me.id, ...playerQrToken(me.id) } });
+}
+
 export async function playerCareerHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.getPlayerCareer(parseId(req.params.id), viewerOf(req)) });
 }
@@ -297,9 +307,15 @@ export async function updateTeamHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.updateTeam(parseId(req.params.id), teamIndex(req), team) });
 }
 
+// Players for a team: by mobile, or a known player by their QR code.
 const teamPlayersSchema = z.object({
   players: z
-    .array(z.object({ mobile: mobileSchema, name: playerName.pipe(z.string().min(1).max(100)).optional() }))
+    .array(
+      z.union([
+        z.object({ playerQr: z.string().trim().min(1).max(100) }),
+        z.object({ mobile: mobileSchema, name: playerName.pipe(z.string().min(1).max(100)).optional() }),
+      ]),
+    )
     .min(1)
     .max(100),
 });
@@ -315,7 +331,7 @@ export async function lookupTeamPlayerHandler(req: Request, res: Response) {
 export async function addTeamPlayersHandler(req: Request, res: Response) {
   const { players } = teamPlayersSchema.parse(req.body);
   res.json({
-    data: await cricketService.addTeamPlayers(parseId(req.params.id), teamIndex(req), players, viewerOf(req)),
+    data: await cricketService.addTeamPlayers(parseId(req.params.id), teamIndex(req), teamRows(players), viewerOf(req)),
   });
 }
 
@@ -330,7 +346,7 @@ export async function addFriendlyTeamPlayersHandler(req: Request, res: Response)
   const { teamName, teamKey, players } = teamPlayersSchema
     .extend({ teamName: z.string().trim().min(1).max(60), teamKey: z.string().trim().min(1).max(120).optional() })
     .parse(req.body);
-  res.json({ data: await cricketService.addFriendlyTeamPlayers(teamName, players, viewerOf(req), teamKey) });
+  res.json({ data: await cricketService.addFriendlyTeamPlayers(teamName, teamRows(players), viewerOf(req), teamKey) });
 }
 
 export async function setTournamentOrganisersHandler(req: Request, res: Response) {

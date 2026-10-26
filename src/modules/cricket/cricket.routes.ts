@@ -31,6 +31,7 @@ import {
   getTournamentHandler,
   grantPlayerLoginHandler,
   meHandler,
+  myQrHandler,
   playerCareerHandler,
   revokePlayerLoginHandler,
   setTournamentOrganisersHandler,
@@ -88,6 +89,10 @@ import {
   addSavedTeamPlayersHandler,
   createSavedTeamHandler,
   deleteSavedTeamHandler,
+  invitePreviewHandler,
+  joinTeamHandler,
+  savedTeamInviteHandler,
+  tournamentTeamInviteHandler,
   getSavedTeamHandler,
   setSavedTeamRolesHandler,
   updateSavedTeamHandler,
@@ -195,6 +200,7 @@ cricketAdminRouter.delete(
   }),
 );
 cricketAdminRouter.put("/me/profile", asyncHandler(updateMyProfileHandler));
+cricketAdminRouter.get("/me/qr", asyncHandler(myQrHandler));
 cricketAdminRouter.put("/me/photo", upload.fields([{ name: "photo", maxCount: 1 }]), asyncHandler(setMyPhotoHandler));
 cricketAdminRouter.get("/players", asyncHandler(listPlayersHandler));
 // Players browse every tournament to follow one (opening it needs a follow).
@@ -224,6 +230,16 @@ cricketAdminRouter.put("/saved-teams/:id", asyncHandler(updateSavedTeamHandler))
 cricketAdminRouter.put("/saved-teams/:id/roles", asyncHandler(setSavedTeamRolesHandler));
 cricketAdminRouter.post("/saved-teams/:id/players", asyncHandler(addSavedTeamPlayersHandler));
 cricketAdminRouter.delete("/saved-teams/:id", asyncHandler(deleteSavedTeamHandler));
+// Team join links: a team's managers get (GET) or replace (POST) its code;
+// anyone signed in opens a link and joins (limited per account, so codes
+// can't be guessed).
+cricketAdminRouter.get("/saved-teams/:id/invite", asyncHandler(savedTeamInviteHandler));
+cricketAdminRouter.post("/saved-teams/:id/invite", asyncHandler(savedTeamInviteHandler));
+cricketAdminRouter.get("/tournaments/:id/teams/:index/invite", asyncHandler(tournamentTeamInviteHandler));
+cricketAdminRouter.post("/tournaments/:id/teams/:index/invite", asyncHandler(tournamentTeamInviteHandler));
+const joinLimit = asyncHandler(rateLimit("team-join", 60, 60 * 60_000, (req) => req.admin!.sub));
+cricketAdminRouter.get("/join/:code", joinLimit, asyncHandler(invitePreviewHandler));
+cricketAdminRouter.post("/join/:code", joinLimit, asyncHandler(joinTeamHandler));
 
 // A one-off match's captain, found by mobile before adding them.
 cricketAdminRouter.get("/players/lookup", lookupLimit, asyncHandler(lookupPlayerHandler));

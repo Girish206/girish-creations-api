@@ -784,3 +784,24 @@ model CricketSavedTeam {
 
   @@map("cricket_saved_teams")
 }
+
+// A team's join link (/join/<code>): whoever opens it signed in can add
+// themselves to the team. One per team, made on demand by its managers;
+// making a new one stops the old link working, and each lasts a week. Kept apart from the teams so
+// the code never goes out with them. A saved team's (savedTeamId) or a
+// tournament team's (tournamentId + teamIndex, shifted when teams before it
+// are removed).
+model CricketTeamInvite {
+  id           BigInt   @id @default(0) @map("_id")
+  code         String   @unique
+  savedTeamId  BigInt?  @map("saved_team_id")
+  tournamentId BigInt?  @map("tournament_id")
+  teamIndex    Int?     @map("team_index")
+  // When the link stops working (null = never, for none made so far).
+  expiresAt    DateTime? @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([savedTeamId])
+  @@index([tournamentId])
+  @@map("cricket_team_invites")
+}

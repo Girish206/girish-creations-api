@@ -1073,6 +1073,7 @@ export async function deleteTournament(id: bigint) {
   }
   await prisma.cricketMatch.deleteMany({ where: { tournamentId: id } });
   await prisma.cricketFollow.deleteMany({ where: { kind: { in: ["tournament", "team"] }, targetId: id } });
+  await prisma.cricketTeamInvite.deleteMany({ where: { tournamentId: id } });
   await prisma.cricketTournament.delete({ where: { id } });
   await deleteUploadedFile(tournament.logoUrl);
   await deleteUploadedFile(tournament.bannerUrl);
@@ -1337,7 +1338,7 @@ export async function updateTeam(id: bigint, index: number, input: CricketTeamIn
 
 // The team's captain may add players to it (as can the tournament's
 // organisers and super admins).
-async function teamForManager(id: bigint, index: number, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
+export async function teamForManager(id: bigint, index: number, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
   const tournament = await getTournamentOrThrow(id);
   const team = tournament.teams[index];
   if (!team) throw NotFoundError("Team not found");
@@ -1361,30 +1362,59 @@ export async function lookupTeamPlayer(
   return player && { id: player.id, name: player.name, role: player.role, photoUrl: player.photoUrl, mobile };
 }
 
-// Adds players to a team by mobile: a known number joins as is, a new one
-// (which needs a name) is created first. Everyone is checked before anything
-// is created, so a bad row adds no one.
+// A player to add to a team: a mobile number (with a name when it's a new
+// one), or a known player picked by id (their QR code).
+export type TeamPlayerRow = { mobile: string; name?: string } | { playerId: bigint };
+
+// The rows' players that already exist, and the new numbers to create —
+// checked, but nothing written yet.
+export async function playersForRows(rows: TeamPlayerRow[]) {
+  const mobiles = [...new Map(rows.flatMap((row) => ("mobile" in row ? [[row.mobile, row] as const] : []))).values()];
+  const ids = [...new Set(rows.flatMap((row) => ("playerId" in row ? [row.playerId] : [])))];
+  const existing = await prisma.cricketPlayer.findMany({
+    where: { OR: [{ mobile: { in: mobiles.map((row) => row.mobile) } }, { id: { in: ids } }] },
+  });
+  if (ids.some((id) => !existing.some((player) => player.id === id))) throw NotFoundError("Player not found");
+  const fresh = mobiles.filter((row) => !existing.some((player) => player.mobile === row.mobile));
+  if (fresh.some((row) => !row.name)) throw BadRequestError("Enter a name for each new player");
+  return { existing, fresh };
+}
+
+export async function createPlayersFor(fresh: { mobile: string; name?: string }[]) {
+  const created = [];
+  for (const row of fresh) {
+    created.push(await prisma.cricketPlayer.create({ data: { name: row.name!, mobile: row.mobile } }));
+  }
+  return created;
+}
+
+// Adds players to a team: a known number (or player) joins as is, a new
+// number (which needs a name) is created first. Everyone is checked before
+// anything is created, so a bad row adds no one.
 export async function addTeamPlayers(
   id: bigint,
   index: number,
-  rows: { mobile: string; name?: string }[],
+  rows: TeamPlayerRow[],
   viewer: { adminId: bigint; isSuperAdmin: boolean },
 ) {
-  const { tournament, team } = await teamForManager(id, index, viewer);
-  const unique = [...new Map(rows.map((row) => [row.mobile, row])).values()];
-  const existing = await prisma.cricketPlayer.findMany({ where: { mobile: { in: unique.map((row) => row.mobile) } } });
+  const { tournament } = await teamForManager(id, index, viewer);
+  return addToTournamentTeam(tournament, index, rows);
+}
+
+// No check of who's asking: the captain's sheet above, or a player
+// joining through the team's link (cricket-invite.service.ts).
+export async function addToTournamentTeam(tournament: Tournament, index: number, rows: TeamPlayerRow[]) {
+  const team = tournament.teams[index];
+  const { existing, fresh } = await playersForRows(rows);
   for (const player of existing) {
     const onTeam = tournament.teams.findIndex((t) => t.playerIds.includes(player.id));
     if (onTeam === index) throw ConflictError(`${player.name} is already in ${team.name}`);
     if (onTeam !== -1) throw ConflictError(`${player.name} is on ${tournament.teams[onTeam].name}`);
   }
-  const fresh = unique.filter((row) => !existing.some((player) => player.mobile === row.mobile));
-  if (fresh.some((row) => !row.name)) throw BadRequestError("Enter a name for each new player");
-  if (team.playerIds.length + unique.length > 100) throw BadRequestError("A team can have at most 100 players");
-  const created = [];
-  for (const row of fresh) {
-    created.push(await prisma.cricketPlayer.create({ data: { name: row.name!, mobile: row.mobile } }));
+  if (team.playerIds.length + existing.length + fresh.length > 100) {
+    throw BadRequestError("A team can have at most 100 players");
   }
+  const created = await createPlayersFor(fresh);
   const playerIds = [...team.playerIds, ...existing.map((p) => p.id), ...created.map((p) => p.id)];
   const teams = tournament.teams.map((t, i) => (i === index ? { ...t, playerIds } : t));
   return saveTournament(tournament, { teams, playerIds: [...new Set([...tournament.playerIds, ...playerIds])] });
@@ -1451,6 +1481,11 @@ export async function removeTeam(id: bigint, index: number) {
     where: { kind: "team", targetId: id, teamIndex: { gt: index } },
     data: { teamIndex: { decrement: 1 } },
   });
+  await prisma.cricketTeamInvite.deleteMany({ where: { tournamentId: id, teamIndex: index } });
+  await prisma.cricketTeamInvite.updateMany({
+    where: { tournamentId: id, teamIndex: { gt: index } },
+    data: { teamIndex: { decrement: 1 } },
+  });
   return prisma.cricketTournament.update({
     where: { id },
     data: {
@@ -1514,7 +1549,7 @@ export async function listTeamPlayers(key: string) {
 // before anything is written.
 export async function addFriendlyTeamPlayers(
   teamName: string,
-  rows: { mobile: string; name?: string }[],
+  rows: TeamPlayerRow[],
   viewer: { adminId: bigint; isSuperAdmin: boolean },
   teamKey?: string,
 ) {
@@ -1539,19 +1574,12 @@ export async function addFriendlyTeamPlayers(
   );
   if (allowed.length === 0) throw ForbiddenError("Only the team's captain can add players");
 
-  const unique = [...new Map(rows.map((row) => [row.mobile, row])).values()];
-  const existing = await prisma.cricketPlayer.findMany({ where: { mobile: { in: unique.map((row) => row.mobile) } } });
+  const { existing, fresh } = await playersForRows(rows);
   for (const player of existing) {
     const clash = allowed.find((match) => match.teams[1 - sideOf(match)].playerIds.includes(player.id));
     if (clash) throw ConflictError(`${player.name} plays for ${clash.teams[1 - sideOf(clash)].name} in an upcoming match`);
   }
-  const fresh = unique.filter((row) => !existing.some((player) => player.mobile === row.mobile));
-  if (fresh.some((row) => !row.name)) throw BadRequestError("Enter a name for each new player");
-
-  const created = [];
-  for (const row of fresh) {
-    created.push(await prisma.cricketPlayer.create({ data: { name: row.name!, mobile: row.mobile } }));
-  }
+  const created = await createPlayersFor(fresh);
   const ids = [...existing.map((p) => p.id), ...created.map((p) => p.id)];
   for (const match of allowed) {
     const side = sideOf(match);
