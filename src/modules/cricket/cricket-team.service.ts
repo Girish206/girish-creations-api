@@ -43,8 +43,31 @@ export async function createSavedTeam(name: string, viewer: Viewer) {
   });
 }
 
-export async function getSavedTeam(id: bigint) {
-  return getOrThrow(id);
+// Open to its creator, its players and super admins, to anyone following
+// one of its players, and to whoever organised, scored or played a match
+// against it.
+export async function getSavedTeam(id: bigint, viewer: Viewer) {
+  const team = await getOrThrow(id);
+  if (viewer.isSuperAdmin || team.createdById === viewer.adminId) return team;
+  const me = await findMyPlayer(viewer.adminId);
+  if (me && team.playerIds.includes(me.id)) return team;
+  const [follow, match] = await Promise.all([
+    me && team.playerIds.length
+      ? prisma.cricketFollow.findFirst({ where: { followerId: me.id, kind: "player", targetId: { in: team.playerIds } } })
+      : null,
+    prisma.cricketMatch.findFirst({
+      where: {
+        teams: { some: { teamKey: team.teamKey } },
+        OR: [
+          { createdById: viewer.adminId },
+          ...(me ? [{ scorerIds: { has: me.id } }, { teams: { some: { playerIds: { has: me.id } } } }] : []),
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
+  if (follow || match) return team;
+  throw ForbiddenError("Follow a player in this team to see it");
 }
 
 // The teams someone made or plays for (their My Teams).
@@ -99,9 +122,27 @@ export async function addSavedTeamPlayers(id: bigint, rows: { mobile: string; na
   for (const row of fresh) {
     created.push(await prisma.cricketPlayer.create({ data: { name: row.name!, mobile: row.mobile } }));
   }
+  const added = [...existing.map((p) => p.id), ...created.map((p) => p.id)];
+  // The team's matches that haven't started get them too (unless they're
+  // down to play for the other side there).
+  const upcoming = await prisma.cricketMatch.findMany({
+    where: { status: "scheduled", teams: { some: { teamKey: team.teamKey } } },
+  });
+  for (const match of upcoming) {
+    const other = match.teams.find((side) => side.teamKey !== team.teamKey);
+    const joining = added.filter((playerId) => !other?.playerIds.includes(playerId));
+    await prisma.cricketMatch.update({
+      where: { id: match.id },
+      data: {
+        teams: match.teams.map((side) =>
+          side.teamKey === team.teamKey ? { ...side, playerIds: [...new Set([...side.playerIds, ...joining])] } : side,
+        ),
+      },
+    });
+  }
   return prisma.cricketSavedTeam.update({
     where: { id },
-    data: { playerIds: [...team.playerIds, ...existing.map((p) => p.id), ...created.map((p) => p.id)] },
+    data: { playerIds: [...team.playerIds, ...added] },
   });
 }
 

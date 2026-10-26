@@ -38,6 +38,7 @@ const signUpSchema = z.object({
   name: playerName.pipe(z.string().min(2).max(100)).optional(),
   mobile: mobileSchema,
   password: z.string().min(8).max(100),
+  inviteCode: z.string().trim().max(12).optional(),
 });
 
 const profileSchema = z
@@ -81,7 +82,15 @@ const tournamentSchema = z
     ballType: z.enum(BALL_TYPES).nullish(),
     pitchType: z.enum(PITCH_TYPES).nullish(),
     matchType: z.enum(MATCH_TYPES).nullish(),
-    overs: z.number().int().min(1).max(50).nullish(),
+    overs: z.number().int().min(1).max(100).nullish(),
+    // Default playing conditions for its matches; left out keeps them.
+    ballsPerOver: z.number().int().min(4).max(10).nullish(),
+    bowlerOverLimit: z.number().int().min(1).max(50).nullish(),
+    lastManStands: z.boolean().nullish(),
+    freeHit: z.boolean().nullish(),
+    // Left out keeps them as they are.
+    finished: z.boolean().optional(),
+    isPublic: z.boolean().optional(),
   })
   .refine((t) => !t.startDate || !t.endDate || t.endDate >= t.startDate, {
     message: "The end date can't be before the start date",
@@ -158,13 +167,21 @@ export async function meHandler(req: Request, res: Response) {
 }
 
 export async function playerCareerHandler(req: Request, res: Response) {
-  res.json({ data: await cricketService.getPlayerCareer(parseId(req.params.id)) });
+  res.json({ data: await cricketService.getPlayerCareer(parseId(req.params.id), viewerOf(req)) });
 }
 
 export async function grantPlayerLoginHandler(req: Request, res: Response) {
   const { password } = loginSchema.parse(req.body);
   await cricketService.grantPlayerLogin(parseId(req.params.id), password, viewerOf(req).adminId);
   res.status(204).send();
+}
+
+export async function playerInviteHandler(req: Request, res: Response) {
+  res.json({ data: await cricketService.playerInvite(parseId(req.params.id), viewerOf(req)) });
+}
+
+export async function resetPlayerLoginHandler(req: Request, res: Response) {
+  res.json({ data: await cricketService.resetPlayerLogin(parseId(req.params.id)) });
 }
 
 export async function revokePlayerLoginHandler(req: Request, res: Response) {
@@ -209,8 +226,8 @@ export async function deletePlayerHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
-export async function listTournamentsHandler(_req: Request, res: Response) {
-  res.json({ data: await cricketService.listTournaments() });
+export async function listTournamentsHandler(req: Request, res: Response) {
+  res.json({ data: await cricketService.listTournaments(viewerOf(req)) });
 }
 
 export async function getTournamentHandler(req: Request, res: Response) {
@@ -310,10 +327,20 @@ export async function listTeamPlayersHandler(req: Request, res: Response) {
 }
 
 export async function addFriendlyTeamPlayersHandler(req: Request, res: Response) {
-  const { teamName, players } = teamPlayersSchema
-    .extend({ teamName: z.string().trim().min(1).max(60) })
+  const { teamName, teamKey, players } = teamPlayersSchema
+    .extend({ teamName: z.string().trim().min(1).max(60), teamKey: z.string().trim().min(1).max(120).optional() })
     .parse(req.body);
-  res.json({ data: await cricketService.addFriendlyTeamPlayers(teamName, players, viewerOf(req)) });
+  res.json({ data: await cricketService.addFriendlyTeamPlayers(teamName, players, viewerOf(req), teamKey) });
+}
+
+export async function setTournamentOrganisersHandler(req: Request, res: Response) {
+  const { playerIds } = scorersSchema.parse(req.body);
+  res.json({ data: await cricketService.setTournamentOrganisers(parseId(req.params.id), playerIds) });
+}
+
+export async function mergePlayersHandler(req: Request, res: Response) {
+  const { intoId } = z.object({ intoId: playerId }).parse(req.body);
+  res.json({ data: await cricketService.mergePlayers(parseId(req.params.id), intoId) });
 }
 
 export async function setTeamRolesHandler(req: Request, res: Response) {

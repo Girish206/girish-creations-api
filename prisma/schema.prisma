@@ -218,6 +218,10 @@ model AdminUser {
   // Player access to the Cricket module: their own stats, matches and
   // tournaments. Managing cricket needs super admin.
   hasCricketAccess     Boolean  @default(false) @map("has_cricket_access")
+  // Bumped by "Sign out everywhere" (and when a login is reset): tokens
+  // carry the version they were issued at, and CricDesk refuses older ones.
+  // Null = 0 (accounts made before it existed).
+  sessionVersion       Int?     @map("session_version")
   createdAt            DateTime @default(now()) @map("created_at")
 
   portfolioProfile        UserProfile?
@@ -470,6 +474,11 @@ model CricketPlayer {
   role      String?
   // Profile photo, as an /api/files/<id> path.
   photoUrl  String?  @map("photo_url")
+  // Six digits an organiser shares with a player they added, which the
+  // player enters to claim the record (set their password) on sign-up, so
+  // knowing someone's number isn't enough. Cleared once claimed; made on
+  // demand (null = none issued).
+  inviteCode String? @map("invite_code")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("cricket_players")
@@ -555,12 +564,28 @@ model CricketTournament {
   matchType       String?           @map("match_type")
   // Default overs per innings for its matches.
   overs           Int?
+  // Default playing conditions for its matches (see CricketMatch); each
+  // match starts with these and can change its own.
+  ballsPerOver    Int?              @map("balls_per_over")
+  bowlerOverLimit Int?              @map("bowler_over_limit")
+  lastManStands   Boolean?          @map("last_man_stands")
+  freeHit         Boolean?          @map("free_hit")
   // How it's played: its phases (league, groups, super league, playoffs,
   // series) as the client's CricketFormat, checked by cricket-format.ts.
   // Null = not set up (every match counts towards one points table).
   format          Json?
   // Players the organiser lets score (and edit) every match in it.
   scorerIds       BigInt[]          @map("scorer_ids")
+  // Co-organisers (players): they manage it just like its creator.
+  organiserIds    BigInt[]          @map("organiser_ids")
+  // When the organiser marked it finished (null = still on, or decided by
+  // its dates).
+  finishedAt      DateTime?         @map("finished_at")
+  // Anyone with the link can see it (and its matches) without signing in.
+  isPublic        Boolean?          @map("is_public")
+  // Bumped on every write of its teams, so two people editing at once
+  // can't silently overwrite each other (null = 0).
+  version         Int?
   // The account that created it; it (and super admins) manage it. Null for
   // tournaments made before this existed (super admins only).
   createdById     BigInt?           @map("created_by_id")
@@ -604,6 +629,16 @@ type CricketBall {
   shotZone     String? @map("shot_zone")
   // When it was recorded (null on older balls).
   at           DateTime?
+  // Runs the batters ran off a no-ball that weren't hit: "bye" or
+  // "leg-bye" (they're extras, not the batter's). Null = off the bat.
+  byeType      String?  @map("bye_type")
+  // A run-out's end: "striker" or "non-striker" — where the wicket was
+  // broken, so the survivor is put at the other end. Null = worked out
+  // from the runs (older balls).
+  outEnd       String?  @map("out_end")
+  // A 4 or 6 that reached the boundary (false = all run). Null on older
+  // balls: then 4s and 6s count as boundaries.
+  boundary     Boolean?
 }
 
 type CricketInnings {
@@ -677,6 +712,24 @@ model CricketMatch {
   // 0 or 1 when completed with a winner; null for a tie or no result.
   winner          Int?
   resultText      String?            @map("result_text")
+  // How a result entered by hand was decided: "super-over", "walkover",
+  // "forfeit", "concede", "dls", "bowl-out" or "other". Null = played out.
+  resultMethod    String?            @map("result_method")
+  // The chasing side's target after a rain cut (null = first innings + 1).
+  revisedTarget   Int?               @map("revised_target")
+  // Balls in an over (null = 6; 5 for The Hundred).
+  ballsPerOver    Int?               @map("balls_per_over")
+  // Most overs one bowler may bowl (null = no limit).
+  bowlerOverLimit Int?               @map("bowler_over_limit")
+  // The last batter bats on alone (gully / box cricket).
+  lastManStands   Boolean?           @map("last_man_stands")
+  // A no-ball gives a free hit (null = yes; false = off).
+  freeHit         Boolean?           @map("free_hit")
+  // Anyone with the link can watch it without signing in.
+  isPublic        Boolean?           @map("is_public")
+  // Bumped on every score change: a write based on an older copy (another
+  // phone, a retried request) is refused instead of overwriting (null = 0).
+  version         Int?
   playerOfMatchId BigInt?            @map("player_of_match_id")
   // Players added to score (and edit) this match, along with its
   // organisers and both captains.
@@ -700,6 +753,20 @@ model CricketMatch {
 // leaders. One-off matches that pick it carry its teamKey ("f:<uuid>", like
 // any friendly team), and their side starts with its players and leaders.
 // Its creator, its captain and super admins manage it.
+// A browser that asked for notifications (Web Push) for a CricDesk account:
+// match starts and results of what they play in or follow.
+model CricketPushSubscription {
+  id        BigInt   @id @default(0) @map("_id")
+  adminId   BigInt   @map("admin_id")
+  endpoint  String
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([adminId])
+  @@map("cricket_push_subscriptions")
+}
+
 model CricketSavedTeam {
   id            BigInt   @id @default(0) @map("_id")
   teamKey       String   @map("team_key")

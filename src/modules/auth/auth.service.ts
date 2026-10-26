@@ -35,6 +35,7 @@ export function issueToken(admin: AdminUser, remember = false) {
     hasSavingsAccess: admin.hasSavingsAccess,
     hasCricketAccess: admin.hasCricketAccess,
     ...(remember ? { remember: true } : {}),
+    sv: admin.sessionVersion ?? 0,
   };
   const expiresIn = (remember ? env.jwtRememberExpiresIn : env.jwtExpiresIn) as jwt.SignOptions["expiresIn"];
   const token = jwt.sign(payload, env.jwtSecret, { expiresIn });
@@ -85,8 +86,14 @@ export async function login(identifier: string, password: string, remember = fal
 // deactivated or loses its password.
 export async function refresh(current: AdminTokenPayload, remember = false) {
   const admin = await prisma.adminUser.findUnique({ where: { id: BigInt(current.sub) } });
-  if (!admin || !canSignIn(admin)) {
+  if (!admin || !canSignIn(admin) || (current.sv ?? 0) !== (admin.sessionVersion ?? 0)) {
     throw UnauthorizedError("This account can no longer sign in");
   }
   return issueToken(admin, Boolean(current.remember) || remember);
+}
+
+// Signs this account out on every device: tokens issued before now stop
+// working wherever the version is checked (CricDesk's API, and refresh).
+export async function signOutEverywhere(adminId: bigint) {
+  await prisma.adminUser.update({ where: { id: adminId }, data: { sessionVersion: { increment: 1 } } });
 }

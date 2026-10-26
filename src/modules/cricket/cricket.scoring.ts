@@ -11,7 +11,9 @@ export interface BallLike {
   noDelivery?: boolean | null;
 }
 
-export const EXTRA_TYPES = ["wide", "no-ball", "bye", "leg-bye"] as const;
+// "penalty": runs the umpires award the batting side (5 for a fielding
+// offence), recorded between deliveries.
+export const EXTRA_TYPES = ["wide", "no-ball", "bye", "leg-bye", "penalty"] as const;
 export const WICKET_TYPES = [
   "bowled",
   "caught",
@@ -35,6 +37,8 @@ export const BOWLER_WICKETS = ["bowled", "caught", "caught-behind", "lbw", "stum
 export const NOT_OUT_EXITS = ["retired-hurt", "retired", "absent-hurt"];
 // Only ever between deliveries.
 export const NO_DELIVERY_ONLY = ["retired", "retired-out", "timed-out", "absent-hurt"];
+// What can still get a batter out on a free hit.
+export const FREE_HIT_OUTS = ["run-out", "obstructing-field", "hit-ball-twice", "retired-hurt", "retired", "retired-out"];
 // Can also be between deliveries: retiring hurt, or a Mankad run-out.
 export const NO_DELIVERY_ALLOWED = [...NO_DELIVERY_ONLY, "retired-hurt", "run-out"];
 // The next batter, before they reach the crease.
@@ -64,4 +68,19 @@ export function inningsSummary(balls: BallLike[]) {
   };
 }
 
-export const oversText = (legalBalls: number) => `${Math.floor(legalBalls / 6)}.${legalBalls % 6}`;
+export const oversText = (legalBalls: number, perOver = 6) => `${Math.floor(legalBalls / perOver)}.${legalBalls % perOver}`;
+
+// Balls in an over for this match (The Hundred plays 5).
+export const ballsPerOver = (match: { ballsPerOver?: number | null }) => match.ballsPerOver ?? 6;
+
+// Whether the next delivery is a free hit: after a no-ball, and still after
+// a wide or no-ball bowled on the free hit itself.
+export function isFreeHitNext(balls: BallLike[]) {
+  let freeHit = false;
+  for (const ball of balls) {
+    if (ball.noDelivery) continue;
+    if (ball.extraType === "no-ball") freeHit = true;
+    else if (ball.extraType !== "wide") freeHit = false;
+  }
+  return freeHit;
+}

@@ -210,6 +210,10 @@ async function createFixtures(tournament: Tournament, fixtures: FixtureInput[], 
         ...rolesWithin(tournament.teams[index], tournament.teams[index].playerIds),
       })),
       overs: tournament.overs ?? 20,
+      ballsPerOver: tournament.ballsPerOver,
+      bowlerOverLimit: tournament.bowlerOverLimit,
+      lastManStands: tournament.lastManStands,
+      freeHit: tournament.freeHit,
       scheduledAt: fixture.scheduledAt,
       venue: fixture.venue ?? tournament.ground,
       city: tournament.city,
@@ -283,12 +287,16 @@ export async function addFixtures(
 }
 
 // Clears the format (its unplayed fixtures go with it; played ones stay as
-// ordinary matches).
+// ordinary matches, no longer tied to a phase — so a new format can be set).
 export async function clearFormat(id: bigint) {
   await getTournamentOrThrow(id);
-  const matches = await prisma.cricketMatch.findMany({ where: { tournamentId: id } });
+  const matches = (await prisma.cricketMatch.findMany({ where: { tournamentId: id } })).filter((match) => match.phaseId);
   await prisma.cricketMatch.deleteMany({
-    where: { id: { in: matches.filter((match) => match.phaseId && match.status === "scheduled").map((match) => match.id) } },
+    where: { id: { in: matches.filter((match) => match.status === "scheduled").map((match) => match.id) } },
+  });
+  await prisma.cricketMatch.updateMany({
+    where: { id: { in: matches.filter((match) => match.status !== "scheduled").map((match) => match.id) } },
+    data: { phaseId: null, group: null, slot: null },
   });
   return prisma.cricketTournament.update({ where: { id }, data: { format: null } });
 }

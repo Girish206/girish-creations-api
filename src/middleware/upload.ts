@@ -1,6 +1,7 @@
 import multer from "multer";
 import { compressImage } from "../lib/compressImage";
 import { prisma } from "../lib/prisma";
+import { HttpError } from "../utils/httpError";
 
 // Vercel rejects any request body over 4.5MB before it reaches this code
 // (and a MongoDB document is capped at 16MB, as uploads are stored inline in
@@ -10,7 +11,18 @@ const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 // Buffers the file in memory; uploadFile then writes the bytes into the
 // "files" collection, so no local disk (or external blob store) is involved.
-export const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES } });
+// Raster images and PDFs (a portfolio's resume) only. SVG, HTML and the like
+// could carry script, and files are served from the sites' own domains.
+export const UPLOAD_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif", "application/pdf"]);
+
+export const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_BYTES },
+  fileFilter: (_req, file, accept) => {
+    if (UPLOAD_TYPES.has(file.mimetype.toLowerCase())) return accept(null, true);
+    accept(new HttpError(400, "Upload a JPEG, PNG, WebP or GIF image (or a PDF)", "UNSUPPORTED_FILE"));
+  },
+});
 
 export const FILE_URL_PREFIX = "/api/files/";
 

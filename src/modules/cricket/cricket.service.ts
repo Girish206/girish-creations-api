@@ -1,10 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
-import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ConflictError, ForbiddenError, HttpError, NotFoundError } from "../../utils/httpError";
 import { assertMobileFree } from "../admin-user/admin-user.service";
 import { deleteUploadedFile, uploadFile } from "../../middleware/upload";
 import { normalizeMobile } from "../../utils/mobile";
+import { assertWithinLimit } from "../../middleware/rateLimit";
 
 // ===== Players =====
 
@@ -180,15 +182,19 @@ export interface CricketSignUpInput {
   name?: string;
   mobile: string;
   password: string;
+  // Needed to claim a player someone else added (see CricketPlayer.inviteCode).
+  inviteCode?: string;
 }
 
 // The sign-in screen's first step: from the mobile number or email typed,
 // which step comes next. "password" for an account that signs in already,
 // "setPassword" for a number an organiser added (or a guest account) with
-// no password yet, "register" for a new number. An email can't sign up.
+// no password yet — claimed with the invite code the organiser shares —
+// and "register" for a new number. An email can't sign up. The player's
+// name isn't given out: anyone can ask about any number.
 export type SignInStep = "password" | "setPassword" | "register";
 
-export async function lookupSignIn(identifier: string): Promise<{ step: SignInStep; name: string | null }> {
+export async function lookupSignIn(identifier: string): Promise<{ step: SignInStep; name: null }> {
   if (identifier.includes("@")) {
     const account = await prisma.adminUser.findUnique({ where: { email: identifier.toLowerCase() } });
     if (!account) throw NotFoundError("No account uses this email. Use your mobile number to create one.");
@@ -203,21 +209,37 @@ export async function lookupSignIn(identifier: string): Promise<{ step: SignInSt
     return { step: "password", name: null };
   }
   const player = await prisma.cricketPlayer.findFirst({ where: { mobile } });
-  const name = player?.name ?? account?.name ?? null;
-  return { step: name ? "setPassword" : "register", name };
+  return { step: player || account ? "setPassword" : "register", name: null };
 }
 
 // Anyone can create a player account with their name, mobile number and a
-// password. If an organiser already added them (same mobile), the account
-// links to that player; otherwise a new player joins the pool. An account
-// that exists for this number without a password (a guest) is claimed:
-// it gets the password and cricket access.
+// password. A number someone already added (a player an organiser or
+// captain put in a team) is claimed only with the invite code they were
+// given, so knowing a teammate's number isn't enough to become them. A new
+// number gets a new player.
 export async function signUp(input: CricketSignUpInput) {
   const existing = await accountForMobile(input.mobile);
   if (existing && (existing.passwordHash !== null || !existing.isActive)) {
     throw ConflictError("An account with this mobile number already exists. Sign in instead.");
   }
   const player = await prisma.cricketPlayer.findFirst({ where: { mobile: input.mobile } });
+  if (existing && !player) {
+    // A Money Hub guest: not a cricket player, and no invite to check.
+    throw ForbiddenError("This number is already on a Girish Creations account. Ask whoever added it to give it access.");
+  }
+  if (player) {
+    // Six digits: a handful of tries per number, then a wait.
+    await assertWithinLimit(`invite-code:${input.mobile}`, 5, 15 * 60_000);
+    if (!player.inviteCode || input.inviteCode?.trim() !== player.inviteCode) {
+      throw new HttpError(
+        400,
+        player.inviteCode
+          ? "That invite code isn't right. Check the code the organiser who added you sent."
+          : "Ask the organiser or captain who added you to send you an invite code.",
+        "INVITE_CODE",
+      );
+    }
+  }
   const name = input.name ?? player?.name ?? existing?.name;
   if (!name) throw BadRequestError("Enter your name");
   const passwordHash = await bcrypt.hash(input.password, 10);
@@ -235,10 +257,79 @@ export async function signUp(input: CricketSignUpInput) {
           hasPortfolioAccess: false,
         },
       });
-  if (!player) {
+  if (player) {
+    await prisma.cricketPlayer.update({ where: { id: player.id }, data: { inviteCode: null } });
+  } else {
     await prisma.cricketPlayer.create({ data: { name, mobile: input.mobile } });
   }
   return account;
+}
+
+const newInviteCode = () => String(randomInt(100000, 1000000));
+
+// Who may hand a player their invite code: super admins, and anyone who
+// added them somewhere — the organiser of a tournament, match or saved team
+// they're in, or the captain of their side.
+async function canInvite(playerId: bigint, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
+  if (viewer.isSuperAdmin) return true;
+  const me = await findMyPlayer(viewer.adminId);
+  const captainOf = me ? [{ teams: { some: { captainId: me.id, playerIds: { has: playerId } } } }] : [];
+  const [tournaments, matches, savedTeams] = await Promise.all([
+    prisma.cricketTournament.count({
+      where: { OR: [{ createdById: viewer.adminId, playerIds: { has: playerId } }, ...captainOf] },
+    }),
+    prisma.cricketMatch.count({
+      where: { OR: [{ createdById: viewer.adminId, teams: { some: { playerIds: { has: playerId } } } }, ...captainOf] },
+    }),
+    prisma.cricketSavedTeam.count({
+      where: { playerIds: { has: playerId }, OR: [{ createdById: viewer.adminId }, ...(me ? [{ captainId: me.id }] : [])] },
+    }),
+  ]);
+  return tournaments + matches + savedTeams > 0;
+}
+
+// The player's invite code (made the first time it's asked for), for the
+// organiser to send them. Players who already sign in don't need one.
+export async function playerInvite(playerId: bigint, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
+  const player = await prisma.cricketPlayer.findUnique({ where: { id: playerId } });
+  if (!player) throw NotFoundError("Player not found");
+  if (!(await canInvite(playerId, viewer))) {
+    throw ForbiddenError("Only the organiser or captain who added this player can invite them");
+  }
+  const account = await accountForMobile(player.mobile);
+  if (account && account.passwordHash !== null) {
+    throw ConflictError(`${player.name} already signs in to CricDesk`);
+  }
+  const code = player.inviteCode ?? newInviteCode();
+  if (!player.inviteCode) await prisma.cricketPlayer.update({ where: { id: playerId }, data: { inviteCode: code } });
+  return { playerId, name: player.name, code };
+}
+
+// A player who forgot their password: a super admin clears it, which signs
+// them out everywhere, and gets a fresh invite code to send them so they can
+// set a new one. Accounts also used for the other Girish Creations apps are
+// reset there instead.
+export async function resetPlayerLogin(playerId: bigint) {
+  const player = await prisma.cricketPlayer.findUnique({ where: { id: playerId } });
+  if (!player) throw NotFoundError("Player not found");
+  const account = await accountForMobile(player.mobile);
+  if (account) {
+    const cricketOnly =
+      !account.email &&
+      !account.isOwner &&
+      !account.isSuperAdmin &&
+      !account.hasPortfolioAccess &&
+      !account.hasExpensesAccess &&
+      !account.hasSavingsAccess;
+    if (!cricketOnly) throw ForbiddenError("This account is also used for Girish Creations — reset its password there");
+    await prisma.adminUser.update({
+      where: { id: account.id },
+      data: { passwordHash: null, sessionVersion: { increment: 1 } },
+    });
+  }
+  const code = newInviteCode();
+  await prisma.cricketPlayer.update({ where: { id: playerId }, data: { inviteCode: code } });
+  return { playerId, name: player.name, code };
 }
 
 export interface CricketProfileInput {
@@ -310,7 +401,11 @@ export async function getMe(adminId: bigint) {
   const account = await prisma.adminUser.findUnique({ where: { id: adminId } });
   const player = await findMyPlayer(adminId);
   const [createdTournaments, createdMatches] = await Promise.all([
-    prisma.cricketTournament.findMany({ where: { createdById: adminId }, orderBy: { createdAt: "desc" } }),
+    // Co-organised ones count as theirs too.
+    prisma.cricketTournament.findMany({
+      where: { OR: [{ createdById: adminId }, ...(player ? [{ organiserIds: { has: player.id } }] : [])] },
+      orderBy: { createdAt: "desc" },
+    }),
     prisma.cricketMatch.findMany({
       where: { createdById: adminId },
       orderBy: [{ scheduledAt: "desc" }, { createdAt: "desc" }],
@@ -400,8 +495,9 @@ export async function getMe(adminId: bigint) {
 }
 
 // Any player's career, for their profile: the matches they've been picked
-// for and the tournaments they're in.
-export async function getPlayerCareer(playerId: bigint) {
+// for and the tournaments they're in. Only the matches the viewer could
+// open themselves (see assertCanViewMatch) are included.
+export async function getPlayerCareer(playerId: bigint, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
   const player = await prisma.cricketPlayer.findUnique({ where: { id: playerId } });
   if (!player) throw NotFoundError("Player not found");
   const [matches, tournaments] = await Promise.all([
@@ -411,7 +507,58 @@ export async function getPlayerCareer(playerId: bigint) {
     }),
     prisma.cricketTournament.findMany({ where: { playerIds: { has: playerId } }, orderBy: { createdAt: "desc" } }),
   ]);
-  return { matches, tournaments };
+  const canView = await matchViewCheck(viewer);
+  return { matches: matches.filter(canView), tournaments: tournaments.map((t) => withoutContacts(t, viewer)) };
+}
+
+// assertCanViewMatch for many matches at once: what the viewer follows and
+// takes part in is read once, then each match is checked in memory.
+export async function matchViewCheck(viewer: { adminId: bigint; isSuperAdmin: boolean }) {
+  type Viewable = {
+    tournamentId: bigint | null;
+    createdById: bigint | null;
+    scorerIds: bigint[];
+    teams: { playerIds: bigint[] }[];
+  };
+  if (viewer.isSuperAdmin) return (_match: Viewable) => true;
+  const player = await findMyPlayer(viewer.adminId);
+  const [follows, tournaments] = await Promise.all([
+    player ? prisma.cricketFollow.findMany({ where: { followerId: player.id } }) : [],
+    prisma.cricketTournament.findMany({
+      where: {
+        OR: [
+          { createdById: viewer.adminId },
+          ...(player
+            ? [{ playerIds: { has: player.id } }, { scorerIds: { has: player.id } }, { organiserIds: { has: player.id } }]
+            : []),
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
+  const followedPlayers = new Set(follows.filter((f) => f.kind === "player").map((f) => f.targetId));
+  const openTournaments = new Set([
+    ...tournaments.map((t) => t.id),
+    ...follows.filter((f) => f.kind !== "player").map((f) => f.targetId),
+  ]);
+  return (match: Viewable) => {
+    if (match.createdById === viewer.adminId) return true;
+    if (player && match.scorerIds.includes(player.id)) return true;
+    const playerIds = match.teams.flatMap((team) => team.playerIds);
+    if (playerIds.some((id) => followedPlayers.has(id))) return true;
+    if (match.tournamentId !== null) return openTournaments.has(match.tournamentId);
+    return player !== null && playerIds.includes(player.id);
+  };
+}
+
+// The organiser's phone and email are for the people in a tournament (its
+// page needs a follow); the full list everyone browses leaves them out.
+export function withoutContacts<T extends { createdById: bigint | null; organiserMobile: string | null; organiserEmail: string | null }>(
+  tournament: T,
+  viewer: { adminId: bigint; isSuperAdmin: boolean },
+): T {
+  if (viewer.isSuperAdmin || tournament.createdById === viewer.adminId) return tournament;
+  return { ...tournament, organiserMobile: null, organiserEmail: null };
 }
 
 // A player (not a super admin) may only look at tournaments they're in or
@@ -422,9 +569,12 @@ export async function assertCanViewTournament(tournamentId: bigint, viewer: { ad
   const player = await findMyPlayer(viewer.adminId);
   const [tournament, follow] = player
     ? await Promise.all([
-        // Its squad and its scorers.
+        // Its squad, its scorers and its co-organisers.
         prisma.cricketTournament.findFirst({
-          where: { id: tournamentId, OR: [{ playerIds: { has: player.id } }, { scorerIds: { has: player.id } }] },
+          where: {
+            id: tournamentId,
+            OR: [{ playerIds: { has: player.id } }, { scorerIds: { has: player.id } }, { organiserIds: { has: player.id } }],
+          },
         }),
         prisma.cricketFollow.findFirst({
           where: { followerId: player.id, kind: { in: ["tournament", "team"] }, targetId: tournamentId },
@@ -464,10 +614,12 @@ export async function assertCanViewMatch(
 }
 
 // Who may change a tournament (its details, squad, teams, fixtures): super
-// admins and the account that created it.
+// admins, the account that created it, and the co-organisers it names.
 export async function canManageTournament(tournamentId: bigint, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
   if (viewer.isSuperAdmin) return true;
-  return (await prisma.cricketTournament.count({ where: { id: tournamentId, createdById: viewer.adminId } })) > 0;
+  if ((await prisma.cricketTournament.count({ where: { id: tournamentId, createdById: viewer.adminId } })) > 0) return true;
+  const player = await findMyPlayer(viewer.adminId);
+  return player !== null && (await prisma.cricketTournament.count({ where: { id: tournamentId, organiserIds: { has: player.id } } })) > 0;
 }
 
 export async function assertCanManageTournament(tournamentId: bigint, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
@@ -540,6 +692,12 @@ export async function setTournamentScorers(id: bigint, playerIds: bigint[]) {
   return prisma.cricketTournament.update({ where: { id }, data: { scorerIds: [...new Set(playerIds)] } });
 }
 
+// Co-organisers: players who manage the tournament alongside its creator.
+export async function setTournamentOrganisers(id: bigint, playerIds: bigint[]) {
+  await assertPlayersExist(playerIds);
+  return prisma.cricketTournament.update({ where: { id }, data: { organiserIds: [...new Set(playerIds)] } });
+}
+
 // A new photo replaces the old one (whose file is deleted); no file and
 // `remove` clears it.
 export async function setPlayerPhoto(id: bigint, photo: Express.Multer.File | undefined, remove: boolean) {
@@ -580,11 +738,136 @@ export async function deletePlayer(id: bigint) {
   }
   const playedIn = await prisma.cricketMatch.count({ where: { teams: { some: { playerIds: { has: id } } } } });
   if (playedIn > 0) {
-    throw ConflictError("This player has played in matches, so their record can't be deleted");
+    throw ConflictError("This player has played in matches, so their record can't be deleted — merge it into another instead");
   }
   await prisma.cricketPlayer.delete({ where: { id } });
   await prisma.cricketFollow.deleteMany({ where: { OR: [{ followerId: id }, { kind: "player", targetId: id }] } });
+  await dropPlayerEverywhere(id, null);
+  await revokePlayerLoginFor(existing.mobile);
   await deleteUploadedFile(existing.photoUrl);
+}
+
+// Swaps (or, with `into` null, removes) a player id everywhere else it's
+// kept: scorer and co-organiser lists, and saved teams.
+async function dropPlayerEverywhere(id: bigint, into: bigint | null) {
+  const swap = (ids: bigint[]) => [...new Set(ids.flatMap((x) => (x === id ? (into === null ? [] : [into]) : [x])))];
+  const role = (x: bigint | null) => (x === id ? into : x);
+  for (const t of await prisma.cricketTournament.findMany({
+    where: { OR: [{ scorerIds: { has: id } }, { organiserIds: { has: id } }] },
+  })) {
+    await prisma.cricketTournament.update({
+      where: { id: t.id },
+      data: { scorerIds: swap(t.scorerIds), organiserIds: swap(t.organiserIds) },
+    });
+  }
+  for (const m of await prisma.cricketMatch.findMany({ where: { scorerIds: { has: id } } })) {
+    await prisma.cricketMatch.update({ where: { id: m.id }, data: { scorerIds: swap(m.scorerIds) } });
+  }
+  for (const team of await prisma.cricketSavedTeam.findMany({ where: { playerIds: { has: id } } })) {
+    await prisma.cricketSavedTeam.update({
+      where: { id: team.id },
+      data: {
+        playerIds: swap(team.playerIds),
+        captainId: role(team.captainId),
+        viceCaptainId: role(team.viceCaptainId),
+        keeperId: role(team.keeperId),
+      },
+    });
+  }
+}
+
+// A deleted player's sign-in goes with them (it's a cricket-only account).
+async function revokePlayerLoginFor(mobile: string | null) {
+  const account = await accountForMobile(mobile);
+  if (account && !account.email && !account.isOwner && !account.isSuperAdmin && !account.hasPortfolioAccess && !account.hasExpensesAccess && !account.hasSavingsAccess) {
+    await prisma.adminUser.update({
+      where: { id: account.id },
+      data: { hasCricketAccess: false, isActive: false, sessionVersion: { increment: 1 } },
+    });
+  }
+}
+
+// One person added twice (two numbers, or before mobiles were required):
+// everything recorded for `fromId` — squads, teams, every ball, awards,
+// follows — moves to `intoId`, and `fromId` is deleted. Super admins only.
+export async function mergePlayers(fromId: bigint, intoId: bigint) {
+  if (fromId === intoId) throw BadRequestError("Pick two different players");
+  const [from, into] = await Promise.all([
+    prisma.cricketPlayer.findUnique({ where: { id: fromId } }),
+    prisma.cricketPlayer.findUnique({ where: { id: intoId } }),
+  ]);
+  if (!from || !into) throw NotFoundError("Player not found");
+  const swap = (ids: bigint[]) => [...new Set(ids.map((x) => (x === fromId ? intoId : x)))];
+  const one = (x: bigint | null) => (x === fromId ? intoId : x);
+
+  for (const t of await prisma.cricketTournament.findMany({ where: { playerIds: { has: fromId } } })) {
+    if (t.teams.some((team) => team.playerIds.includes(fromId)) && t.teams.some((team) => team.playerIds.includes(intoId))) {
+      const a = t.teams.find((team) => team.playerIds.includes(fromId))!;
+      const b = t.teams.find((team) => team.playerIds.includes(intoId))!;
+      if (a !== b) throw ConflictError(`They're on different teams in "${t.name}" — move one of them first`);
+    }
+    await prisma.cricketTournament.update({
+      where: { id: t.id },
+      data: {
+        playerIds: swap(t.playerIds),
+        matchSets: t.matchSets.map((set) => ({ playerIds: swap(set.playerIds) })),
+        teams: t.teams.map((team) => ({
+          ...team,
+          playerIds: swap(team.playerIds),
+          captainId: one(team.captainId),
+          viceCaptainId: one(team.viceCaptainId),
+          keeperId: one(team.keeperId),
+        })),
+      },
+    });
+  }
+  for (const m of await prisma.cricketMatch.findMany({
+    where: { OR: [{ teams: { some: { playerIds: { has: fromId } } } }, { playerOfMatchId: fromId }] },
+  })) {
+    const sides = m.teams.filter((team) => team.playerIds.includes(fromId) || team.playerIds.includes(intoId));
+    if (sides.length === 2 && sides[0] !== sides[1] && sides.every((s) => s.playerIds.includes(fromId) !== s.playerIds.includes(intoId))) {
+      throw ConflictError("They played against each other in a match, so they can't be the same person");
+    }
+    await prisma.cricketMatch.update({
+      where: { id: m.id },
+      data: {
+        playerOfMatchId: one(m.playerOfMatchId),
+        teams: m.teams.map((team) => ({
+          ...team,
+          playerIds: swap(team.playerIds),
+          captainId: one(team.captainId),
+          viceCaptainId: one(team.viceCaptainId),
+          keeperId: one(team.keeperId),
+        })),
+        innings: m.innings.map((innings) => ({
+          ...innings,
+          strikerId: one(innings.strikerId),
+          nonStrikerId: one(innings.nonStrikerId),
+          bowlerId: one(innings.bowlerId),
+          balls: innings.balls.map((ball) => ({
+            ...ball,
+            batterId: one(ball.batterId)!,
+            nonStrikerId: one(ball.nonStrikerId)!,
+            bowlerId: one(ball.bowlerId)!,
+            dismissedId: one(ball.dismissedId),
+            fielderId: one(ball.fielderId),
+            secondFielderId: one(ball.secondFielderId),
+          })),
+        })),
+      },
+    });
+  }
+  await dropPlayerEverywhere(fromId, intoId);
+  await prisma.cricketFollow.updateMany({ where: { followerId: fromId }, data: { followerId: intoId } });
+  await prisma.cricketFollow.updateMany({ where: { kind: "player", targetId: fromId }, data: { targetId: intoId } });
+  await prisma.cricketPlayer.delete({ where: { id: fromId } });
+  await revokePlayerLoginFor(from.mobile);
+  if (!into.photoUrl && from.photoUrl) {
+    await prisma.cricketPlayer.update({ where: { id: intoId }, data: { photoUrl: from.photoUrl } });
+  } else {
+    await deleteUploadedFile(from.photoUrl);
+  }
+  return prisma.cricketPlayer.findUnique({ where: { id: intoId } });
 }
 
 // ===== Tournaments =====
@@ -603,7 +886,23 @@ export interface CricketTournamentInput {
   pitchType?: string | null;
   matchType?: string | null;
   overs?: number | null;
+  // Default playing conditions for its matches; left out keeps them.
+  ballsPerOver?: number | null;
+  bowlerOverLimit?: number | null;
+  lastManStands?: boolean | null;
+  freeHit?: boolean | null;
+  // Left out keeps them as they are.
+  finished?: boolean;
+  isPublic?: boolean;
 }
+
+const CONDITIONS = ["ballsPerOver", "bowlerOverLimit", "lastManStands", "freeHit"] as const;
+
+// The playing conditions given (an older client sends none, keeping them).
+const conditionsOf = (input: CricketTournamentInput) =>
+  Object.fromEntries(CONDITIONS.flatMap((key) => (input[key] !== undefined ? [[key, input[key]]] : []))) as Partial<
+    Pick<CricketTournamentInput, (typeof CONDITIONS)[number]>
+  >;
 
 // The descriptive fields, with anything left out cleared.
 const tournamentDetails = (input: CricketTournamentInput) => ({
@@ -621,8 +920,9 @@ const tournamentDetails = (input: CricketTournamentInput) => ({
   overs: input.overs ?? null,
 });
 
-export async function listTournaments() {
-  return prisma.cricketTournament.findMany({ orderBy: { createdAt: "desc" } });
+export async function listTournaments(viewer: { adminId: bigint; isSuperAdmin: boolean }) {
+  const tournaments = await prisma.cricketTournament.findMany({ orderBy: { createdAt: "desc" } });
+  return tournaments.map((tournament) => withoutContacts(tournament, viewer));
 }
 
 async function getTournamentOrThrow(id: bigint) {
@@ -632,6 +932,8 @@ async function getTournamentOrThrow(id: bigint) {
   }
   return tournament;
 }
+
+type Tournament = Awaited<ReturnType<typeof getTournamentOrThrow>>;
 
 export async function getTournament(id: bigint) {
   return getTournamentOrThrow(id);
@@ -647,17 +949,85 @@ export async function createTournament(input: CricketTournamentInput, createdByI
       // Teams are added on the tournament's Teams tab.
       teams: [],
       matchSets: [],
+      ...conditionsOf(input),
     },
   });
 }
 
-// Teams aren't touched here — see the team functions below.
+// Teams aren't touched here — see the team functions below. Fixtures not
+// played yet that still had the old overs or ground take the new ones.
 export async function updateTournament(id: bigint, input: CricketTournamentInput) {
-  await getTournamentOrThrow(id);
+  const tournament = await getTournamentOrThrow(id);
+  const details = tournamentDetails(input);
+  if (details.overs !== null && details.overs !== tournament.overs) {
+    await prisma.cricketMatch.updateMany({
+      where: { tournamentId: id, status: "scheduled", ...(tournament.overs !== null ? { overs: tournament.overs } : {}) },
+      data: { overs: details.overs },
+    });
+  }
+  if (details.ground !== tournament.ground) {
+    await prisma.cricketMatch.updateMany({
+      where: { tournamentId: id, status: "scheduled", venue: tournament.ground },
+      data: { venue: details.ground },
+    });
+  }
+  // A changed playing condition reaches the fixtures not played yet that
+  // still had the old one.
+  const conditions = conditionsOf(input);
+  for (const key of CONDITIONS) {
+    const next = conditions[key];
+    const old = tournament[key];
+    if (next === undefined || next === old) continue;
+    const scheduled = await prisma.cricketMatch.findMany({ where: { tournamentId: id, status: "scheduled" } });
+    const stillOld = scheduled.filter((match) => (match[key] ?? null) === (old ?? null)).map((match) => match.id);
+    if (stillOld.length) {
+      await prisma.cricketMatch.updateMany({ where: { id: { in: stillOld } }, data: { [key]: next } });
+    }
+  }
   return prisma.cricketTournament.update({
     where: { id },
-    data: { name: input.name, ...tournamentDetails(input) },
+    data: {
+      name: input.name,
+      ...details,
+      ...conditions,
+      ...(input.finished !== undefined ? { finishedAt: input.finished ? (tournament.finishedAt ?? new Date()) : null } : {}),
+      ...(input.isPublic !== undefined ? { isPublic: input.isPublic } : {}),
+    },
   });
+}
+
+// Writes a tournament's teams / squad on top of the copy they were worked
+// out from: if someone else changed it since (an organiser and a captain at
+// once), nothing is written and they're asked to try again. Fixtures not
+// played yet follow their teams' new rosters.
+async function saveTournament(tournament: Tournament, data: Prisma.CricketTournamentUpdateManyMutationInput) {
+  const version = tournament.version ?? 0;
+  const { count } = await prisma.cricketTournament.updateMany({
+    where: {
+      id: tournament.id,
+      OR: version === 0 ? [{ version: 0 }, { version: null }, { version: { isSet: false } }] : [{ version }],
+    },
+    data: { ...data, version: version + 1 },
+  });
+  if (count === 0) throw ConflictError("Someone else just changed this tournament — reload and try again");
+  const saved = await getTournamentOrThrow(tournament.id);
+  if (data.teams !== undefined) await syncScheduledRosters(saved);
+  return saved;
+}
+
+// A fixture copies its teams' rosters when it's made; until it starts, it
+// keeps up with them (a player moved to another team, a new player added).
+async function syncScheduledRosters(tournament: Tournament) {
+  const scheduled = await prisma.cricketMatch.findMany({ where: { tournamentId: tournament.id, status: "scheduled" } });
+  for (const match of scheduled) {
+    const teams = match.teams.map((side) => {
+      const team = tournament.teams[side.teamIndex];
+      return team ? { ...side, name: team.name, playerIds: team.playerIds, ...rolesWithin(team, team.playerIds) } : side;
+    });
+    if (JSON.stringify(teams) !== JSON.stringify(match.teams)) {
+      await prisma.cricketMatch.update({ where: { id: match.id }, data: { teams } });
+    }
+  }
 }
 
 // A new logo / banner replaces the old one (whose file is deleted); the
@@ -682,9 +1052,25 @@ export async function setTournamentImages(
   return updated;
 }
 
-// Its matches, follows (and uploaded images) go with it.
+// Its fixtures, follows (and uploaded images) go with it. Matches that were
+// played stay, as one-off matches, so nobody's career stats are lost.
 export async function deleteTournament(id: bigint) {
   const tournament = await getTournamentOrThrow(id);
+  const matches = await prisma.cricketMatch.findMany({ where: { tournamentId: id } });
+  const played = matches.filter((m) => m.status === "completed" || m.innings.some((innings) => innings.balls.length > 0));
+  for (const match of played) {
+    await prisma.cricketMatch.update({
+      where: { id: match.id },
+      data: {
+        tournamentId: null,
+        phaseId: null,
+        group: null,
+        slot: null,
+        // Same team key the sides had in the tournament (effectiveTeamKey).
+        teams: match.teams.map((side) => ({ ...side, teamKey: side.teamKey ?? `t:${id}:${side.teamIndex}` })),
+      },
+    });
+  }
   await prisma.cricketMatch.deleteMany({ where: { tournamentId: id } });
   await prisma.cricketFollow.deleteMany({ where: { kind: { in: ["tournament", "team"] }, targetId: id } });
   await prisma.cricketTournament.delete({ where: { id } });
@@ -703,9 +1089,7 @@ export async function setSquad(id: bigint, playerIds: bigint[]) {
     throw BadRequestError("Some of these players no longer exist");
   }
   const inSquad = new Set(squad);
-  return prisma.cricketTournament.update({
-    where: { id },
-    data: {
+  return saveTournament(tournament, {
       playerIds: squad,
       // Anyone taken out of the squad leaves their team too (and any
       // captain / vice-captain / keeper role on it).
@@ -715,7 +1099,6 @@ export async function setSquad(id: bigint, playerIds: bigint[]) {
       matchSets: tournament.matchSets
         .map((set) => ({ playerIds: set.playerIds.filter((playerId) => inSquad.has(playerId)) }))
         .filter((set) => set.playerIds.length > 0),
-    },
   });
 }
 
@@ -746,10 +1129,7 @@ export async function setMatchSets(id: bigint, sets: bigint[][]) {
       seen.add(playerId);
     }
   }
-  return prisma.cricketTournament.update({
-    where: { id },
-    data: { matchSets: sets.map((playerIds) => ({ playerIds })) },
-  });
+  return saveTournament(tournament, { matchSets: sets.map((playerIds) => ({ playerIds })) });
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -786,12 +1166,9 @@ export async function generateTeams(id: bigint) {
       .slice(0, playerIds.length);
     shuffle(playerIds).forEach((playerId, index) => rosterOf(targets[index]).push(playerId));
   }
-  return prisma.cricketTournament.update({
-    where: { id },
-    data: {
-      teams: tournament.teams.map((team, index) => (team.manual ? team : withRoster(team, rosterOf(index)))),
-      generatedAt: new Date(),
-    },
+  return saveTournament(tournament, {
+    teams: tournament.teams.map((team, index) => (team.manual ? team : withRoster(team, rosterOf(index)))),
+    generatedAt: new Date(),
   });
 }
 
@@ -844,7 +1221,7 @@ export async function swapPlayers(id: bigint, playerA: bigint, playerB: bigint) 
       team.playerIds.map((playerId) => (playerId === playerA ? playerB : playerId === playerB ? playerA : playerId)),
     ),
   );
-  return prisma.cricketTournament.update({ where: { id }, data: { teams } });
+  return saveTournament(tournament, { teams });
 }
 
 // Moves one player to another team without a swap — for evening out
@@ -868,7 +1245,7 @@ export async function movePlayer(id: bigint, playerId: bigint, toTeamIndex: numb
           : team.playerIds,
     ),
   );
-  return prisma.cricketTournament.update({ where: { id }, data: { teams } });
+  return saveTournament(tournament, { teams });
 }
 
 // ===== Tournament teams =====
@@ -932,10 +1309,7 @@ export async function addTeams(id: bigint, input: CricketTeamInput[]) {
   ];
   if (teams.length > MAX_TEAMS) throw BadRequestError(`A tournament can have at most ${MAX_TEAMS} teams`);
   await checkTeams(teams);
-  return prisma.cricketTournament.update({
-    where: { id },
-    data: { teams, playerIds: squadWith(tournament.playerIds, teams) },
-  });
+  return saveTournament(tournament, { teams, playerIds: squadWith(tournament.playerIds, teams) });
 }
 
 // Renames a team and/or sets its players (leaders who leave it are
@@ -948,10 +1322,7 @@ export async function updateTeam(id: bigint, index: number, input: CricketTeamIn
     i === index ? teamFrom(input, team) : team,
   );
   await checkTeams(teams);
-  const updated = await prisma.cricketTournament.update({
-    where: { id },
-    data: { teams, playerIds: squadWith(tournament.playerIds, teams) },
-  });
+  const updated = await saveTournament(tournament, { teams, playerIds: squadWith(tournament.playerIds, teams) });
   if (tournament.teams[index].name !== input.name) {
     const matches = await prisma.cricketMatch.findMany({ where: { tournamentId: id } });
     for (const match of matches.filter((m) => m.teams.some((team) => team.teamIndex === index))) {
@@ -965,12 +1336,12 @@ export async function updateTeam(id: bigint, index: number, input: CricketTeamIn
 }
 
 // The team's captain may add players to it (as can the tournament's
-// creator and super admins).
+// organisers and super admins).
 async function teamForManager(id: bigint, index: number, viewer: { adminId: bigint; isSuperAdmin: boolean }) {
   const tournament = await getTournamentOrThrow(id);
   const team = tournament.teams[index];
   if (!team) throw NotFoundError("Team not found");
-  if (!viewer.isSuperAdmin && tournament.createdById !== viewer.adminId) {
+  if (!(await canManageTournament(id, viewer))) {
     const me = await findMyPlayer(viewer.adminId);
     if (!me || team.captainId !== me.id) throw ForbiddenError("Only the team's captain can add players");
   }
@@ -1016,10 +1387,7 @@ export async function addTeamPlayers(
   }
   const playerIds = [...team.playerIds, ...existing.map((p) => p.id), ...created.map((p) => p.id)];
   const teams = tournament.teams.map((t, i) => (i === index ? { ...t, playerIds } : t));
-  return prisma.cricketTournament.update({
-    where: { id },
-    data: { teams, playerIds: [...new Set([...tournament.playerIds, ...playerIds])] },
-  });
+  return saveTournament(tournament, { teams, playerIds: [...new Set([...tournament.playerIds, ...playerIds])] });
 }
 
 export interface CricketTeamRolesInput {
@@ -1035,7 +1403,7 @@ export async function setTeamRoles(id: bigint, index: number, input: CricketTeam
   if (!team) throw NotFoundError("Team not found");
   assertRoles(input, team.playerIds);
   const teams = tournament.teams.map((t, i) => (i === index ? { ...t, ...input } : t));
-  return prisma.cricketTournament.update({ where: { id }, data: { teams } });
+  return saveTournament(tournament, { teams });
 }
 
 // A team with matches can't go. Later teams move up one, so their matches'
@@ -1119,7 +1487,15 @@ export async function listTeamPlayers(key: string) {
     const saved = await prisma.cricketSavedTeam.findFirst({ where: { teamKey: key } });
     ids.push(...(saved?.playerIds ?? []));
   }
+  // Only the matches that can hold this team are read: its tournament's,
+  // or the one-offs whose side carries the key (older nameless keys still
+  // need every one-off).
   const matches = await prisma.cricketMatch.findMany({
+    where: tournamentTeam
+      ? { OR: [{ tournamentId: BigInt(tournamentTeam[1]) }, { teams: { some: { teamKey: key } } }] }
+      : key.startsWith("legacy:")
+        ? { tournamentId: null }
+        : { teams: { some: { teamKey: key } } },
     select: { tournamentId: true, createdById: true, teams: true },
     orderBy: [{ scheduledAt: "desc" }, { createdAt: "desc" }],
   });
@@ -1140,10 +1516,15 @@ export async function addFriendlyTeamPlayers(
   teamName: string,
   rows: { mobile: string; name?: string }[],
   viewer: { adminId: bigint; isSuperAdmin: boolean },
+  teamKey?: string,
 ) {
+  // The team is found by its key when the client sends it (two teams can
+  // share a name); older clients send the name only.
   const key = teamName.trim().toLowerCase();
-  const sideOf = (match: { teams: { name: string }[] }) =>
-    match.teams.findIndex((team) => team.name.trim().toLowerCase() === key);
+  const sideOf = (match: { tournamentId: bigint | null; createdById: bigint | null; teams: { teamIndex: number; name: string; teamKey?: string | null }[] }) =>
+    match.teams.findIndex((team) =>
+      teamKey ? effectiveTeamKey(match, team) === teamKey : team.name.trim().toLowerCase() === key,
+    );
   const upcoming = (
     await prisma.cricketMatch.findMany({ where: { tournamentId: null, status: "scheduled" } })
   ).filter((match) => sideOf(match) !== -1);

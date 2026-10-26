@@ -31,7 +31,7 @@ export async function createSavedTeamHandler(req: Request, res: Response) {
 }
 
 export async function getSavedTeamHandler(req: Request, res: Response) {
-  res.json({ data: await teamService.getSavedTeam(parseId(req.params.id)) });
+  res.json({ data: await teamService.getSavedTeam(parseId(req.params.id), viewerOf(req)) });
 }
 
 export async function updateSavedTeamHandler(req: Request, res: Response) {

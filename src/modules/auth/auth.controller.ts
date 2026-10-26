@@ -26,6 +26,10 @@ export async function meHandler(req: Request, res: Response) {
   res.json({ data: req.admin });
 }
 
-export async function logoutHandler(_req: Request, res: Response) {
+// Signing out drops the token on the device; `everywhere` also ends every
+// other session of the account.
+export async function logoutHandler(req: Request, res: Response) {
+  const { everywhere } = z.object({ everywhere: z.boolean().optional() }).parse(req.body ?? {});
+  if (everywhere) await authService.signOutEverywhere(BigInt(req.admin!.sub));
   res.status(204).send();
 }

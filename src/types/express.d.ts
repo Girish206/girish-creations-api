@@ -15,6 +15,8 @@ export interface AdminTokenPayload {
   // A long-lived "keep me signed in" session (env.jwtRememberExpiresIn);
   // refreshing keeps it long-lived.
   remember?: boolean;
+  // The account's sessionVersion when this was issued (missing = 0).
+  sv?: number;
 }
 
 declare global {

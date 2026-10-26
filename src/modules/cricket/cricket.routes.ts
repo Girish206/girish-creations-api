@@ -1,7 +1,13 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { upload } from "../../middleware/upload";
-import { requireAdminAuth, requireCricketAccess, requireSuperAdmin } from "../../middleware/auth";
+import { isSuperAdmin, requireAdminAuth, requireCricketAccess, requireSuperAdmin } from "../../middleware/auth";
+import { rateLimit } from "../../middleware/rateLimit";
+import { prisma } from "../../lib/prisma";
+import { UnauthorizedError } from "../../utils/httpError";
+import { z } from "zod";
+import { isSubscribed, notifySelf, pushPublicKey, subscribe, unsubscribe } from "./cricket-push";
+import { publicMatchHandler, publicMatchLiveHandler, publicTournamentHandler } from "./cricket-public.controller";
 import { parseId } from "../../utils/parseId";
 import { assertCanManageTournament, assertMatchAccess, type MatchAccess } from "./cricket.service";
 import { assertScoringSeat } from "./cricket-match.service";
@@ -26,6 +32,10 @@ import {
   meHandler,
   playerCareerHandler,
   revokePlayerLoginHandler,
+  setTournamentOrganisersHandler,
+  mergePlayersHandler,
+  playerInviteHandler,
+  resetPlayerLoginHandler,
   setMyPhotoHandler,
   signInLookupHandler,
   signUpHandler,
@@ -49,6 +59,11 @@ import {
 import {
   abandonMatchHandler,
   addBallHandler,
+  changeSquadHandler,
+  declareResultHandler,
+  editBallHandler,
+  isOrganiser,
+  reopenMatchHandler,
   claimScoringHandler,
   createMatchHandler,
   deleteMatchHandler,
@@ -80,15 +95,50 @@ import {
 // Public sign-in lookup and sign-up for players (mounted outside the
 // signed-in router).
 export const cricketPublicRouter = Router();
-cricketPublicRouter.post("/sign-in/lookup", asyncHandler(signInLookupHandler));
-cricketPublicRouter.post("/register", asyncHandler(signUpHandler));
+// Rate limited per address: the lookup tells whether a number has an
+// account, and sign-up checks invite codes (also limited per number, in
+// the service).
+cricketPublicRouter.post(
+  "/sign-in/lookup",
+  asyncHandler(rateLimit("signin-lookup", 30, 15 * 60_000)),
+  asyncHandler(signInLookupHandler),
+);
+cricketPublicRouter.post("/register", asyncHandler(rateLimit("register", 15, 60 * 60_000)), asyncHandler(signUpHandler));
+// Shared links to public matches and tournaments, signed out.
+const publicLimit = asyncHandler(rateLimit("public-view", 900, 15 * 60_000));
+cricketPublicRouter.get("/public/matches/:id", publicLimit, asyncHandler(publicMatchHandler));
+cricketPublicRouter.get("/public/matches/:id/live", publicLimit, asyncHandler(publicMatchLiveHandler));
+cricketPublicRouter.get("/public/tournaments/:id", publicLimit, asyncHandler(publicTournamentHandler));
+cricketPublicRouter.get("/push/key", (_req, res) => {
+  res.json({ data: { publicKey: pushPublicKey() } });
+});
 
 // Players with cricket access read their own stats, matches and
 // tournaments (the handlers check which). Anyone can create a tournament or
 // match and then manage it (manageTournament / manageMatch), adding players
 // to their squads (POST /players); editing players and the rest is super admin.
 export const cricketAdminRouter = Router();
-cricketAdminRouter.use(requireAdminAuth, requireCricketAccess);
+// The token alone isn't trusted for long: the account must still be able
+// to sign in, still have cricket access, and not have signed out everywhere
+// since (sessionVersion). One small read per request.
+const currentSession = asyncHandler(async (req, _res, next) => {
+  const account = await prisma.adminUser.findUnique({
+    where: { id: BigInt(req.admin!.sub) },
+    select: { isActive: true, passwordHash: true, hasCricketAccess: true, isSuperAdmin: true, isOwner: true, sessionVersion: true },
+  });
+  const allowed =
+    account?.isActive &&
+    account.passwordHash !== null &&
+    (account.hasCricketAccess || account.isSuperAdmin || account.isOwner) &&
+    (req.admin!.sv ?? 0) === (account.sessionVersion ?? 0);
+  if (!allowed) throw UnauthorizedError("This session has ended. Sign in again.");
+  // Access taken away since the token was issued counts from now on.
+  if (isSuperAdmin(req.admin) && !account.isSuperAdmin && !account.isOwner) {
+    req.admin = { ...req.admin!, isSuperAdmin: false, isOwner: false };
+  }
+  next();
+});
+cricketAdminRouter.use(requireAdminAuth, requireCricketAccess, currentSession);
 const admin = requireSuperAdmin;
 const manageTournament = asyncHandler(async (req, _res, next) => {
   await assertCanManageTournament(parseId(req.params.id), viewerOf(req));
@@ -104,13 +154,43 @@ const matchAccess = (needed: MatchAccess) =>
 const organiseMatch = matchAccess("organise");
 const captainMatch = matchAccess("captain");
 const scoreMatch = matchAccess("score");
+// Number → name lookups, limited per account so the player list can't be
+// mapped number by number.
+const lookupLimit = asyncHandler(rateLimit("player-lookup", 60, 60 * 60_000, (req) => req.admin!.sub));
 // Only the one holding the scoring seat changes a live match's score.
 const holdSeat = asyncHandler(async (req, _res, next) => {
-  await assertScoringSeat(parseId(req.params.id), scorerOf(req));
+  await assertScoringSeat(parseId(req.params.id), scorerOf(req), () => isOrganiser(req));
   next();
 });
 
 cricketAdminRouter.get("/me", asyncHandler(meHandler));
+// This browser's match notifications (Web Push).
+const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(1000),
+  keys: z.object({ p256dh: z.string().min(1).max(200), auth: z.string().min(1).max(100) }),
+});
+cricketAdminRouter.get(
+  "/push",
+  asyncHandler(async (req, res) => {
+    res.json({ data: { subscribed: await isSubscribed(BigInt(req.admin!.sub)), publicKey: pushPublicKey() } });
+  }),
+);
+cricketAdminRouter.post(
+  "/push",
+  asyncHandler(async (req, res) => {
+    await subscribe(BigInt(req.admin!.sub), pushSubscriptionSchema.parse(req.body));
+    await notifySelf(BigInt(req.admin!.sub));
+    res.status(204).send();
+  }),
+);
+cricketAdminRouter.delete(
+  "/push",
+  asyncHandler(async (req, res) => {
+    const { endpoint } = z.object({ endpoint: z.string().max(1000) }).parse(req.body ?? {});
+    await unsubscribe(BigInt(req.admin!.sub), endpoint);
+    res.status(204).send();
+  }),
+);
 cricketAdminRouter.put("/me/profile", asyncHandler(updateMyProfileHandler));
 cricketAdminRouter.put("/me/photo", upload.fields([{ name: "photo", maxCount: 1 }]), asyncHandler(setMyPhotoHandler));
 cricketAdminRouter.get("/players", asyncHandler(listPlayersHandler));
@@ -127,7 +207,7 @@ cricketAdminRouter.get("/matches/:id/live", asyncHandler(matchLiveHandler));
 // Grounds and cities already used, suggested on the match / tournament forms.
 cricketAdminRouter.get("/places", asyncHandler(listPlacesHandler));
 // A team's captain adds players to it (the service checks who's asking).
-cricketAdminRouter.get("/tournaments/:id/teams/:index/lookup", asyncHandler(lookupTeamPlayerHandler));
+cricketAdminRouter.get("/tournaments/:id/teams/:index/lookup", lookupLimit, asyncHandler(lookupTeamPlayerHandler));
 cricketAdminRouter.post("/tournaments/:id/teams/:index/players", asyncHandler(addTeamPlayersHandler));
 // A friendly team's captain adds players to its upcoming matches.
 // Everyone in a team (?key=, see effectiveTeamKey), for a one-off side's squad picker.
@@ -143,7 +223,7 @@ cricketAdminRouter.post("/saved-teams/:id/players", asyncHandler(addSavedTeamPla
 cricketAdminRouter.delete("/saved-teams/:id", asyncHandler(deleteSavedTeamHandler));
 
 // A one-off match's captain, found by mobile before adding them.
-cricketAdminRouter.get("/players/lookup", asyncHandler(lookupPlayerHandler));
+cricketAdminRouter.get("/players/lookup", lookupLimit, asyncHandler(lookupPlayerHandler));
 // Anyone can open a player's profile (their matches and tournaments).
 cricketAdminRouter.get("/players/:id/career", asyncHandler(playerCareerHandler));
 cricketAdminRouter.post("/players", asyncHandler(createPlayerHandler));
@@ -158,6 +238,12 @@ cricketAdminRouter.put(
 );
 cricketAdminRouter.put("/players/:id/login", admin, asyncHandler(grantPlayerLoginHandler));
 cricketAdminRouter.delete("/players/:id/login", admin, asyncHandler(revokePlayerLoginHandler));
+// The invite code a player enters to claim their record (whoever added them
+// may ask), and a super admin's reset for a forgotten password.
+cricketAdminRouter.get("/players/:id/invite", asyncHandler(playerInviteHandler));
+cricketAdminRouter.post("/players/:id/login/reset", admin, asyncHandler(resetPlayerLoginHandler));
+// One person added twice: everything of :id moves to intoId.
+cricketAdminRouter.post("/players/:id/merge", admin, asyncHandler(mergePlayersHandler));
 
 cricketAdminRouter.post("/tournaments", asyncHandler(createTournamentHandler));
 cricketAdminRouter.put("/tournaments/:id", manageTournament, asyncHandler(updateTournamentHandler));
@@ -181,6 +267,7 @@ cricketAdminRouter.put("/tournaments/:id/teams/:index", manageTournament, asyncH
 cricketAdminRouter.put("/tournaments/:id/teams/:index/roles", manageTournament, asyncHandler(setTeamRolesHandler));
 cricketAdminRouter.delete("/tournaments/:id/teams/:index", manageTournament, asyncHandler(removeTeamHandler));
 cricketAdminRouter.put("/tournaments/:id/scorers", manageTournament, asyncHandler(setTournamentScorersHandler));
+cricketAdminRouter.put("/tournaments/:id/organisers", manageTournament, asyncHandler(setTournamentOrganisersHandler));
 cricketAdminRouter.put("/tournaments/:id/format", manageTournament, asyncHandler(setFormatHandler));
 cricketAdminRouter.delete("/tournaments/:id/format", manageTournament, asyncHandler(clearFormatHandler));
 cricketAdminRouter.post("/tournaments/:id/fixtures", manageTournament, asyncHandler(addFixturesHandler));
@@ -198,4 +285,10 @@ cricketAdminRouter.post("/matches/:id/balls", scoreMatch, holdSeat, asyncHandler
 cricketAdminRouter.delete("/matches/:id/balls/last", scoreMatch, holdSeat, asyncHandler(undoBallHandler));
 cricketAdminRouter.post("/matches/:id/end-innings", scoreMatch, holdSeat, asyncHandler(endInningsHandler));
 cricketAdminRouter.post("/matches/:id/abandon", scoreMatch, holdSeat, asyncHandler(abandonMatchHandler));
+// Corrections: an earlier ball, and a late arrival or substitute.
+cricketAdminRouter.put("/matches/:id/balls/:innings/:ball", scoreMatch, holdSeat, asyncHandler(editBallHandler));
+cricketAdminRouter.post("/matches/:id/squad", scoreMatch, holdSeat, asyncHandler(changeSquadHandler));
+// Organisers: a result entered by hand, and taking a finished match back.
+cricketAdminRouter.post("/matches/:id/result", organiseMatch, asyncHandler(declareResultHandler));
+cricketAdminRouter.post("/matches/:id/reopen", organiseMatch, asyncHandler(reopenMatchHandler));
 cricketAdminRouter.put("/matches/:id/player-of-match", scoreMatch, asyncHandler(setPlayerOfMatchHandler));
