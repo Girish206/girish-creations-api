@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import * as matchService from "./cricket-match.service";
+import { holdUntilChanged } from "./cricket-live";
 import { EXTRA_TYPES, NO_DELIVERY_ALLOWED, NO_DELIVERY_ONLY, WICKET_TYPES } from "./cricket.scoring";
 import { parseId } from "../../utils/parseId";
 import { BadRequestError, ForbiddenError } from "../../utils/httpError";
@@ -213,9 +214,13 @@ export async function getMatchHandler(req: Request, res: Response) {
 // innings it holds ("12,0"); each innings comes back with `fromBall` and only
 // the balls from there on. The last over it has is always sent again, so an
 // undo (or an undo and a new ball) between two asks still comes through.
+// `since` is the match's updatedAt it holds: the ask is held open until the
+// match changes, or answered with an empty 204 after a while (cricket-live).
 const RESEND_BALLS = 6;
 export async function matchLiveHandler(req: Request, res: Response) {
-  const match = await matchService.getMatch(parseId(req.params.id));
+  const id = parseId(req.params.id);
+  if (!(await holdUntilChanged(req, res, id))) return;
+  const match = await matchService.getMatch(id);
   await assertCanViewMatch(match, viewerOf(req));
   const known = String(req.query.known ?? "")
     .split(",")

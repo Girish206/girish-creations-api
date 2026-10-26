@@ -3,6 +3,7 @@ import type { CricketMatch } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { parseId } from "../../utils/parseId";
 import { NotFoundError } from "../../utils/httpError";
+import { holdUntilChanged } from "./cricket-live";
 
 // Read-only views for shared links, without signing in: a match or a
 // tournament its organiser made public (isPublic), with just enough about
@@ -45,10 +46,14 @@ export async function publicMatchHandler(req: Request, res: Response) {
   });
 }
 
-// Like the signed-in /live: only the balls the page doesn't have yet (see
-// matchLiveHandler), so watching costs little.
+// Like the signed-in /live: held open until the match changes, then only
+// the balls the page doesn't have yet (see matchLiveHandler). Never cached:
+// a cached "nothing new" would send the page straight back for another.
 export async function publicMatchLiveHandler(req: Request, res: Response) {
-  const { match } = await publicMatchOrThrow(parseId(req.params.id));
+  const id = parseId(req.params.id);
+  res.set("Cache-Control", "no-store");
+  if (!(await holdUntilChanged(req, res, id))) return;
+  const { match } = await publicMatchOrThrow(id);
   const known = String(req.query.known ?? "")
     .split(",")
     .map((n) => Number(n) || 0);
@@ -56,8 +61,6 @@ export async function publicMatchLiveHandler(req: Request, res: Response) {
     const fromBall = Math.max(0, Math.min(known[i] ?? 0, inn.balls.length) - 6);
     return { ...inn, fromBall, balls: inn.balls.slice(fromBall) };
   });
-  // A few seconds at the edge: everyone watching shares one database read.
-  res.set("Cache-Control", "public, max-age=0, s-maxage=3, stale-while-revalidate=5");
   res.json({ data: { ...shareable(match), innings } });
 }
 

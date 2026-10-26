@@ -744,6 +744,10 @@ model CricketMatch {
   // admins manage it (score it too). Null for older matches.
   createdById     BigInt?            @map("created_by_id")
   createdAt       DateTime           @default(now()) @map("created_at")
+  // Stamped by Prisma on every write: a live page sends the one it holds and
+  // hears "nothing new" without the match being read (null until the first
+  // write after it was added).
+  updatedAt       DateTime?          @updatedAt @map("updated_at")
 
   @@index([tournamentId])
   @@map("cricket_matches")

@@ -11,6 +11,7 @@ import { publicMatchHandler, publicMatchLiveHandler, publicTournamentHandler } f
 import { parseId } from "../../utils/parseId";
 import { assertCanManageTournament, assertMatchAccess, type MatchAccess } from "./cricket.service";
 import { assertScoringSeat } from "./cricket-match.service";
+import { dbStatsHandler } from "./cricket-db-stats";
 import {
   addTeamPlayersHandler,
   addFriendlyTeamPlayersHandler,
@@ -164,6 +165,8 @@ const holdSeat = asyncHandler(async (req, _res, next) => {
 });
 
 cricketAdminRouter.get("/me", asyncHandler(meHandler));
+// The shared MongoDB database's size, collection by collection.
+cricketAdminRouter.get("/db-stats", admin, asyncHandler(dbStatsHandler));
 // This browser's match notifications (Web Push).
 const pushSubscriptionSchema = z.object({
   endpoint: z.string().url().max(1000),
