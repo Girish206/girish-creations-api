@@ -73,6 +73,7 @@ export async function invitePreview(code: string, viewer: Viewer) {
     captainId: found.team.captainId ?? null,
     viceCaptainId: found.team.viceCaptainId ?? null,
     keeperId: found.team.keeperId ?? null,
+    logoUrl: found.team.logoUrl ?? null,
     joined: me !== null && found.team.playerIds.includes(me.id),
   };
   if (found.kind === "saved") {

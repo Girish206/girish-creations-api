@@ -1077,7 +1077,11 @@ export async function deleteTournament(id: bigint) {
   await prisma.cricketTournament.delete({ where: { id } });
   await deleteUploadedFile(tournament.logoUrl);
   await deleteUploadedFile(tournament.bannerUrl);
-  for (const team of tournament.teams) await deleteUploadedFile(team.logoUrl);
+  for (const [index, team] of tournament.teams.entries()) {
+    if (!team.logoUrl) continue;
+    await syncSideLogos(`t:${id}:${index}`, null);
+    await deleteUploadedFile(team.logoUrl);
+  }
 }
 
 // Replaces the squad. Anyone dropped from it is also taken out of their
@@ -1454,6 +1458,7 @@ export async function setTeamLogo(id: bigint, index: number, logo: Express.Multe
   const logoUrl = logo ? await uploadFile(logo) : null;
   const teams = tournament.teams.map((t, i) => (i === index ? { ...t, logoUrl } : t));
   const updated = await saveTournament(tournament, { teams });
+  await syncSideLogos(`t:${id}:${index}`, logoUrl);
   await deleteUploadedFile(team.logoUrl);
   return updated;
 }
@@ -1516,7 +1521,10 @@ export async function removeTeam(id: bigint, index: number) {
       ...(teams.length === 0 ? { generatedAt: null } : {}),
     },
   });
-  await deleteUploadedFile(tournament.teams[index].logoUrl);
+  if (tournament.teams[index].logoUrl) {
+    await syncSideLogos(removedKey, null);
+    await deleteUploadedFile(tournament.teams[index].logoUrl);
+  }
   return updated;
 }
 
@@ -1530,6 +1538,33 @@ export function effectiveTeamKey(
 ) {
   if (match.tournamentId !== null) return `t:${match.tournamentId}:${side.teamIndex}`;
   return side.teamKey ?? `legacy:${match.createdById ?? 0}:${side.name.trim().toLowerCase()}`;
+}
+
+// Matches keep a copy of each side's logo, as they do its name: a team's new
+// (or removed) logo goes onto its side in every match it has played or is
+// down to play.
+export async function syncSideLogos(teamKey: string, logoUrl: string | null) {
+  const tournamentTeam = /^t:(\d+):\d+$/.exec(teamKey);
+  const matches = await prisma.cricketMatch.findMany({
+    where: tournamentTeam
+      ? { OR: [{ tournamentId: BigInt(tournamentTeam[1]) }, { teams: { some: { teamKey } } }] }
+      : { teams: { some: { teamKey } } },
+  });
+  for (const match of matches) {
+    if (!match.teams.some((side) => effectiveTeamKey(match, side) === teamKey && side.logoUrl !== logoUrl)) continue;
+    await prisma.cricketMatch.update({
+      where: { id: match.id },
+      data: { teams: match.teams.map((side) => (effectiveTeamKey(match, side) === teamKey ? { ...side, logoUrl } : side)) },
+    });
+  }
+}
+
+// The logo of the tournament team behind a "t:<id>:<index>" key, if any.
+export async function tournamentTeamLogo(teamKey: string) {
+  const tournamentTeam = /^t:(\d+):(\d+)$/.exec(teamKey);
+  if (!tournamentTeam) return null;
+  const tournament = await prisma.cricketTournament.findUnique({ where: { id: BigInt(tournamentTeam[1]) } });
+  return tournament?.teams[Number(tournamentTeam[2])]?.logoUrl ?? null;
 }
 
 // A team's roster by its key: the tournament or saved team's players, plus

@@ -12,7 +12,7 @@ import {
   isLegal,
   runsRun,
 } from "./cricket.scoring";
-import { assertRoles, matchAccessOf, rolesWithin, type TeamRoles } from "./cricket.service";
+import { assertRoles, matchAccessOf, rolesWithin, tournamentTeamLogo, type TeamRoles } from "./cricket.service";
 import { savedTeamByKey } from "./cricket-team.service";
 import { notifyMatch } from "./cricket-push";
 
@@ -179,6 +179,8 @@ async function matchTeamsFor(input: CricketMatchInput) {
     }
     // A side picked from a saved team starts with its players and leaders.
     const saved = await Promise.all(keys.map((key) => (key?.startsWith("f:") ? savedTeamByKey(key) : null)));
+    // A side picked from a tournament team takes its logo.
+    const logos = await Promise.all(keys.map((key) => (key?.startsWith("t:") ? tournamentTeamLogo(key) : null)));
     const shared = saved[0] && saved[1] ? saved[0].playerIds.filter((id) => saved[1]!.playerIds.includes(id)) : [];
     if (shared.length) throw BadRequestError("These two teams share players — pick another team");
     return [nameA, nameB].map((name, teamIndex) => {
@@ -194,6 +196,7 @@ async function matchTeamsFor(input: CricketMatchInput) {
           captainId: captainId ?? team.captainId,
           viceCaptainId: team.viceCaptainId,
           keeperId: team.keeperId,
+          logoUrl: team.logoUrl,
         };
       }
       return {
@@ -204,6 +207,7 @@ async function matchTeamsFor(input: CricketMatchInput) {
         captainId,
         viceCaptainId: null,
         keeperId: null,
+        logoUrl: logos[teamIndex],
       };
     });
   }
@@ -221,6 +225,7 @@ async function matchTeamsFor(input: CricketMatchInput) {
     name: tournament.teams[teamIndex].name,
     playerIds: tournament.teams[teamIndex].playerIds,
     ...rolesWithin(tournament.teams[teamIndex], tournament.teams[teamIndex].playerIds),
+    logoUrl: tournament.teams[teamIndex].logoUrl ?? null,
   }));
 }
 

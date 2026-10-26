@@ -8,6 +8,7 @@ import {
   findMyPlayer,
   playersForRows,
   rolesWithin,
+  syncSideLogos,
   type TeamPlayerRow,
   type TeamRoles,
 } from "./cricket.service";
@@ -165,6 +166,7 @@ export async function setSavedTeamLogo(id: bigint, logo: Express.Multer.File | n
     where: { id },
     data: { logoUrl: logo ? await uploadFile(logo) : null },
   });
+  await syncSideLogos(team.teamKey, updated.logoUrl);
   await deleteUploadedFile(team.logoUrl);
   return updated;
 }
@@ -174,7 +176,10 @@ export async function deleteSavedTeam(id: bigint, viewer: Viewer) {
   const team = await forManager(id, viewer, { deleting: true });
   await prisma.cricketTeamInvite.deleteMany({ where: { savedTeamId: id } });
   await prisma.cricketSavedTeam.delete({ where: { id } });
-  await deleteUploadedFile(team.logoUrl);
+  if (team.logoUrl) {
+    await syncSideLogos(team.teamKey, null);
+    await deleteUploadedFile(team.logoUrl);
+  }
 }
 
 // The saved team behind a one-off side's key, if it is one.

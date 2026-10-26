@@ -677,6 +677,9 @@ type CricketMatchTeam {
   // friendly team. Null on tournament matches and older one-offs; see
   // effectiveTeamKey.
   teamKey       String?  @map("team_key")
+  // The team's logo, copied like its name (and kept in step with it by
+  // syncSideLogos).
+  logoUrl       String?  @map("logo_url")
 }
 
 model CricketMatch {
