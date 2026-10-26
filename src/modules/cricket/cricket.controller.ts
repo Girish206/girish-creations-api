@@ -6,7 +6,7 @@ import { parseId } from "../../utils/parseId";
 import { mobileSchema } from "../../utils/mobile";
 import { isSuperAdmin } from "../../middleware/auth";
 import { issueToken } from "../auth/auth.service";
-import { NotFoundError } from "../../utils/httpError";
+import { BadRequestError, NotFoundError } from "../../utils/httpError";
 import { playerQrToken, teamRows } from "./cricket-qr";
 
 // Who's asking: super admins see everything, players only their own.
@@ -367,6 +367,14 @@ export async function setTeamRolesHandler(req: Request, res: Response) {
 export async function setTournamentScorersHandler(req: Request, res: Response) {
   const { playerIds } = scorersSchema.parse(req.body);
   res.json({ data: await cricketService.setTournamentScorers(parseId(req.params.id), playerIds) });
+}
+
+// Multipart: a "logo" file, or removeLogo=true to clear it.
+export async function setTeamLogoHandler(req: Request, res: Response) {
+  const logo = (req.files as Record<string, Express.Multer.File[]> | undefined)?.logo?.[0];
+  const { removeLogo } = z.object({ removeLogo: z.literal("true").optional() }).parse(req.body);
+  if (!logo && removeLogo !== "true") throw BadRequestError("Choose a logo");
+  res.json({ data: await cricketService.setTeamLogo(parseId(req.params.id), teamIndex(req), logo ?? null) });
 }
 
 export async function removeTeamHandler(req: Request, res: Response) {

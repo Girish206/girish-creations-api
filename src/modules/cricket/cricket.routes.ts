@@ -53,6 +53,7 @@ import {
   swapPlayersHandler,
   updatePlayerHandler,
   updateTeamHandler,
+  setTeamLogoHandler,
   setTeamRolesHandler,
   setTournamentScorersHandler,
   updateTournamentHandler,
@@ -95,6 +96,7 @@ import {
   tournamentTeamInviteHandler,
   getSavedTeamHandler,
   setSavedTeamRolesHandler,
+  setSavedTeamLogoHandler,
   updateSavedTeamHandler,
 } from "./cricket-team.controller";
 
@@ -228,6 +230,7 @@ cricketAdminRouter.post("/saved-teams", asyncHandler(createSavedTeamHandler));
 cricketAdminRouter.get("/saved-teams/:id", asyncHandler(getSavedTeamHandler));
 cricketAdminRouter.put("/saved-teams/:id", asyncHandler(updateSavedTeamHandler));
 cricketAdminRouter.put("/saved-teams/:id/roles", asyncHandler(setSavedTeamRolesHandler));
+cricketAdminRouter.put("/saved-teams/:id/logo", upload.fields([{ name: "logo", maxCount: 1 }]), asyncHandler(setSavedTeamLogoHandler));
 cricketAdminRouter.post("/saved-teams/:id/players", asyncHandler(addSavedTeamPlayersHandler));
 cricketAdminRouter.delete("/saved-teams/:id", asyncHandler(deleteSavedTeamHandler));
 // Team join links: a team's managers get (GET) or replace (POST) its code;
@@ -284,6 +287,12 @@ cricketAdminRouter.post("/tournaments/:id/move", manageTournament, asyncHandler(
 cricketAdminRouter.post("/tournaments/:id/teams", manageTournament, asyncHandler(addTeamsHandler));
 cricketAdminRouter.put("/tournaments/:id/teams/:index", manageTournament, asyncHandler(updateTeamHandler));
 cricketAdminRouter.put("/tournaments/:id/teams/:index/roles", manageTournament, asyncHandler(setTeamRolesHandler));
+cricketAdminRouter.put(
+  "/tournaments/:id/teams/:index/logo",
+  manageTournament,
+  upload.fields([{ name: "logo", maxCount: 1 }]),
+  asyncHandler(setTeamLogoHandler),
+);
 cricketAdminRouter.delete("/tournaments/:id/teams/:index", manageTournament, asyncHandler(removeTeamHandler));
 cricketAdminRouter.put("/tournaments/:id/scorers", manageTournament, asyncHandler(setTournamentScorersHandler));
 cricketAdminRouter.put("/tournaments/:id/organisers", manageTournament, asyncHandler(setTournamentOrganisersHandler));

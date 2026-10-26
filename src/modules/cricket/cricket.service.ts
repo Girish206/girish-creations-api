@@ -1077,6 +1077,7 @@ export async function deleteTournament(id: bigint) {
   await prisma.cricketTournament.delete({ where: { id } });
   await deleteUploadedFile(tournament.logoUrl);
   await deleteUploadedFile(tournament.bannerUrl);
+  for (const team of tournament.teams) await deleteUploadedFile(team.logoUrl);
 }
 
 // Replaces the squad. Anyone dropped from it is also taken out of their
@@ -1196,8 +1197,14 @@ export function assertRoles(roles: TeamRoles, playerIds: bigint[]) {
 
 // A team with a new roster: its captain / vice-captain / keeper stay only if
 // they're still on it.
-function withRoster(team: { name: string; manual?: boolean | null } & TeamRoles, playerIds: bigint[]) {
-  return { name: team.name, playerIds, ...rolesWithin(team, playerIds), ...(team.manual ? { manual: true } : {}) };
+function withRoster(team: { name: string; manual?: boolean | null; logoUrl?: string | null } & TeamRoles, playerIds: bigint[]) {
+  return {
+    name: team.name,
+    playerIds,
+    ...rolesWithin(team, playerIds),
+    ...(team.manual ? { manual: true } : {}),
+    ...(team.logoUrl ? { logoUrl: team.logoUrl } : {}),
+  };
 }
 
 function findTeamIndex(teams: { playerIds: bigint[] }[], playerId: bigint) {
@@ -1265,7 +1272,7 @@ export interface CricketTeamInput extends TeamRoles {
 }
 
 // The stored team for this input, on top of the existing one if any.
-function teamFrom(input: CricketTeamInput, existing?: TeamRoles & { manual?: boolean | null }) {
+function teamFrom(input: CricketTeamInput, existing?: TeamRoles & { manual?: boolean | null; logoUrl?: string | null }) {
   const playerIds = [...new Set(input.playerIds)];
   const pick = (key: keyof TeamRoles) => (input[key] !== undefined ? input[key] : existing?.[key]);
   const manual = input.manual ?? existing?.manual;
@@ -1274,6 +1281,7 @@ function teamFrom(input: CricketTeamInput, existing?: TeamRoles & { manual?: boo
     playerIds,
     ...rolesWithin({ captainId: pick("captainId"), viceCaptainId: pick("viceCaptainId"), keeperId: pick("keeperId") }, playerIds),
     ...(manual ? { manual: true } : {}),
+    ...(existing?.logoUrl ? { logoUrl: existing.logoUrl } : {}),
   };
 }
 
@@ -1436,6 +1444,20 @@ export async function setTeamRoles(id: bigint, index: number, input: CricketTeam
   return saveTournament(tournament, { teams });
 }
 
+// A team's logo: a new one replaces the old (whose file is deleted); null
+// clears it.
+export async function setTeamLogo(id: bigint, index: number, logo: Express.Multer.File | null) {
+  const tournament = await getTournamentOrThrow(id);
+  const team = tournament.teams[index];
+  if (!team) throw NotFoundError("Team not found");
+  if (logo && !logo.mimetype.startsWith("image/")) throw BadRequestError("The logo must be an image");
+  const logoUrl = logo ? await uploadFile(logo) : null;
+  const teams = tournament.teams.map((t, i) => (i === index ? { ...t, logoUrl } : t));
+  const updated = await saveTournament(tournament, { teams });
+  await deleteUploadedFile(team.logoUrl);
+  return updated;
+}
+
 // A team with matches can't go. Later teams move up one, so their matches'
 // and follows' indexes do too; matched sets bigger than the new team count
 // are dropped.
@@ -1486,7 +1508,7 @@ export async function removeTeam(id: bigint, index: number) {
     where: { tournamentId: id, teamIndex: { gt: index } },
     data: { teamIndex: { decrement: 1 } },
   });
-  return prisma.cricketTournament.update({
+  const updated = await prisma.cricketTournament.update({
     where: { id },
     data: {
       teams,
@@ -1494,6 +1516,8 @@ export async function removeTeam(id: bigint, index: number) {
       ...(teams.length === 0 ? { generatedAt: null } : {}),
     },
   });
+  await deleteUploadedFile(tournament.teams[index].logoUrl);
+  return updated;
 }
 
 // Which team a match side is (see CricketMatchTeam.teamKey). A tournament

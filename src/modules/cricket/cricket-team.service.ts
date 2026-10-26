@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../lib/prisma";
+import { deleteUploadedFile, uploadFile } from "../../middleware/upload";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 import {
   assertRoles,
@@ -156,11 +157,24 @@ export async function addToSavedTeam(team: SavedTeam, rows: TeamPlayerRow[]) {
   });
 }
 
+// A new logo replaces the old one (whose file is deleted); null clears it.
+export async function setSavedTeamLogo(id: bigint, logo: Express.Multer.File | null, viewer: Viewer) {
+  const team = await forManager(id, viewer);
+  if (logo && !logo.mimetype.startsWith("image/")) throw BadRequestError("The logo must be an image");
+  const updated = await prisma.cricketSavedTeam.update({
+    where: { id },
+    data: { logoUrl: logo ? await uploadFile(logo) : null },
+  });
+  await deleteUploadedFile(team.logoUrl);
+  return updated;
+}
+
 // Its matches keep their sides, which carry on as a friendly team.
 export async function deleteSavedTeam(id: bigint, viewer: Viewer) {
-  await forManager(id, viewer, { deleting: true });
+  const team = await forManager(id, viewer, { deleting: true });
   await prisma.cricketTeamInvite.deleteMany({ where: { savedTeamId: id } });
   await prisma.cricketSavedTeam.delete({ where: { id } });
+  await deleteUploadedFile(team.logoUrl);
 }
 
 // The saved team behind a one-off side's key, if it is one.

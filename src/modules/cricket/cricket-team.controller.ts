@@ -6,6 +6,7 @@ import { parseId } from "../../utils/parseId";
 import { mobileSchema } from "../../utils/mobile";
 import { viewerOf } from "./cricket.controller";
 import { teamRows } from "./cricket-qr";
+import { BadRequestError } from "../../utils/httpError";
 
 // Saved teams (teams made outside any tournament). Who may change one is
 // checked in the service.
@@ -52,6 +53,16 @@ export async function setSavedTeamRolesHandler(req: Request, res: Response) {
 export async function addSavedTeamPlayersHandler(req: Request, res: Response) {
   const { players } = playersSchema.parse(req.body);
   res.json({ data: await teamService.addSavedTeamPlayers(parseId(req.params.id), teamRows(players), viewerOf(req)) });
+}
+
+// Multipart: a "logo" file, or removeLogo=true to clear it.
+const removeLogoSchema = z.object({ removeLogo: z.literal("true").optional() });
+
+export async function setSavedTeamLogoHandler(req: Request, res: Response) {
+  const logo = (req.files as Record<string, Express.Multer.File[]> | undefined)?.logo?.[0];
+  const { removeLogo } = removeLogoSchema.parse(req.body);
+  if (!logo && removeLogo !== "true") throw BadRequestError("Choose a logo");
+  res.json({ data: await teamService.setSavedTeamLogo(parseId(req.params.id), logo ?? null, viewerOf(req)) });
 }
 
 export async function deleteSavedTeamHandler(req: Request, res: Response) {
