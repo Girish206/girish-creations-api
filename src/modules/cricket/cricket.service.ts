@@ -13,6 +13,8 @@ import { assertWithinLimit } from "../../middleware/rateLimit";
 export interface CricketPlayerInput {
   name: string;
   role?: string | null;
+  battingStyle?: string | null;
+  bowlingStyle?: string | null;
   mobile: string;
 }
 
@@ -32,7 +34,7 @@ const canSignIntoCricket = (account: {
 // only see names and roles (no one else's number).
 export async function listPlayers(full: boolean) {
   const players = await prisma.cricketPlayer.findMany({ orderBy: { name: "asc" } });
-  if (!full) return players.map(({ id, name, role, photoUrl }) => ({ id, name, role, photoUrl }));
+  if (!full) return players.map(({ id, name, role, battingStyle, bowlingStyle, photoUrl }) => ({ id, name, role, battingStyle, bowlingStyle, photoUrl }));
   const mobiles = players.flatMap((player) => (player.mobile ? [player.mobile] : []));
   const accounts = await prisma.adminUser.findMany({ where: { mobile: { in: mobiles } } });
   return players.map((player) => {
@@ -64,14 +66,14 @@ export async function findOrCreatePlayer(input: CricketPlayerInput) {
   const player =
     (await prisma.cricketPlayer.findFirst({ where: { mobile: input.mobile } })) ??
     (await prisma.cricketPlayer.create({ data: input }));
-  return { id: player.id, name: player.name, role: player.role, photoUrl: player.photoUrl };
+  return { id: player.id, name: player.name, role: player.role, battingStyle: player.battingStyle, bowlingStyle: player.bowlingStyle, photoUrl: player.photoUrl };
 }
 
 // The player with this mobile (null = a new number), for anyone naming a
 // one-off match's captain. The number isn't echoed back.
 export async function lookupPlayer(mobile: string) {
   const player = await prisma.cricketPlayer.findFirst({ where: { mobile } });
-  return player && { id: player.id, name: player.name, role: player.role, photoUrl: player.photoUrl };
+  return player && { id: player.id, name: player.name, role: player.role, battingStyle: player.battingStyle, bowlingStyle: player.bowlingStyle, photoUrl: player.photoUrl };
 }
 
 // Adds a pasted list in one go, skipping anyone whose mobile is already
@@ -111,6 +113,48 @@ export async function updatePlayer(id: bigint, input: CricketPlayerInput) {
     }
   }
   return prisma.cricketPlayer.update({ where: { id }, data: input });
+}
+
+export async function updatePlayerStyle(
+  id: bigint,
+  input: { battingStyle?: string | null; bowlingStyle?: string | null },
+  full: boolean,
+) {
+  const existing = await prisma.cricketPlayer.findUnique({ where: { id } });
+  if (!existing) {
+    throw NotFoundError("Player not found");
+  }
+  const data: { battingStyle?: string | null; bowlingStyle?: string | null } = {};
+  if (input.battingStyle !== undefined) data.battingStyle = input.battingStyle;
+  if (input.bowlingStyle !== undefined) data.bowlingStyle = input.bowlingStyle;
+  let player: Awaited<ReturnType<typeof prisma.cricketPlayer.update>>;
+  try {
+    player = await prisma.cricketPlayer.update({ where: { id }, data });
+  } catch {
+    const setFields: Record<string, string | null> = {};
+    if (input.battingStyle !== undefined) setFields.batting_style = input.battingStyle;
+    if (input.bowlingStyle !== undefined) setFields.bowling_style = input.bowlingStyle;
+    await prisma.$runCommandRaw({
+      update: "cricket_players",
+      updates: [{ q: { _id: Number(id) }, u: { $set: setFields } }],
+    });
+    player = {
+      ...existing,
+      battingStyle: input.battingStyle !== undefined ? input.battingStyle : existing.battingStyle ?? null,
+      bowlingStyle: input.bowlingStyle !== undefined ? input.bowlingStyle : existing.bowlingStyle ?? null,
+    };
+  }
+  if (!full) {
+    return {
+      id: player.id,
+      name: player.name,
+      role: player.role,
+      battingStyle: player.battingStyle,
+      bowlingStyle: player.bowlingStyle,
+      photoUrl: player.photoUrl,
+    };
+  }
+  return player;
 }
 
 // Lets a player sign in with their mobile number: creates their account
@@ -1371,7 +1415,7 @@ export async function lookupTeamPlayer(
 ) {
   await teamForManager(id, index, viewer);
   const player = await prisma.cricketPlayer.findFirst({ where: { mobile } });
-  return player && { id: player.id, name: player.name, role: player.role, photoUrl: player.photoUrl, mobile };
+  return player && { id: player.id, name: player.name, role: player.role, battingStyle: player.battingStyle, bowlingStyle: player.bowlingStyle, photoUrl: player.photoUrl, mobile };
 }
 
 // A player to add to a team: a mobile number (with a name when it's a new

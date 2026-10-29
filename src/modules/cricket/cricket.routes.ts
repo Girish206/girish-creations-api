@@ -52,6 +52,7 @@ import {
   setTournamentImagesHandler,
   swapPlayersHandler,
   updatePlayerHandler,
+  updatePlayerStyleHandler,
   updateTeamHandler,
   setTeamLogoHandler,
   setTeamRolesHandler,
@@ -251,6 +252,8 @@ cricketAdminRouter.get("/players/:id/career", asyncHandler(playerCareerHandler))
 cricketAdminRouter.post("/players", asyncHandler(createPlayerHandler));
 cricketAdminRouter.post("/players/bulk", admin, asyncHandler(createPlayersBulkHandler));
 cricketAdminRouter.put("/players/:id", admin, asyncHandler(updatePlayerHandler));
+cricketAdminRouter.put("/players/:id/style", asyncHandler(updatePlayerStyleHandler));
+cricketAdminRouter.patch("/players/:id/style", asyncHandler(updatePlayerStyleHandler));
 cricketAdminRouter.delete("/players/:id", admin, asyncHandler(deletePlayerHandler));
 cricketAdminRouter.put(
   "/players/:id/photo",

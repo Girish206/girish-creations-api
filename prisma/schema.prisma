@@ -471,7 +471,9 @@ model CricketPlayer {
   // with the same mobile).
   mobile    String?
   // "batter", "bowler", "all-rounder" or "wicket-keeper"; null = not set.
-  role      String?
+  role         String?
+  battingStyle String?  @map("batting_style")
+  bowlingStyle String?  @map("bowling_style")
   // Profile photo, as an /api/files/<id> path.
   photoUrl  String?  @map("photo_url")
   // Six digits an organiser shares with a player they added, which the

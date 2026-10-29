@@ -19,10 +19,27 @@ export const scorersSchema = z.object({ playerIds: z.array(playerId).max(20) });
 // Trimmed with inner runs of spaces collapsed ("Ravi  Kumar" → "Ravi Kumar").
 const playerName = z.string().transform((name) => name.trim().replace(/\s+/g, " "));
 
+const BATTING_STYLES = ["right-hand", "left-hand"] as const;
+const BOWLING_STYLES = [
+  "right-arm-fast",
+  "right-arm-medium",
+  "right-arm-spin",
+  "left-arm-fast",
+  "left-arm-medium",
+  "left-arm-spin",
+] as const;
+
 const playerSchema = z.object({
   name: playerName.pipe(z.string().min(1).max(100)),
   role: z.enum(["batter", "bowler", "all-rounder", "wicket-keeper"]).nullish(),
+  battingStyle: z.enum(BATTING_STYLES).nullish(),
+  bowlingStyle: z.enum(BOWLING_STYLES).nullish(),
   mobile: mobileSchema,
+});
+
+const playerStyleSchema = z.object({
+  battingStyle: z.enum(BATTING_STYLES).nullish(),
+  bowlingStyle: z.enum(BOWLING_STYLES).nullish(),
 });
 
 const bulkPlayersSchema = z.object({
@@ -221,6 +238,15 @@ export async function createPlayersBulkHandler(req: Request, res: Response) {
 
 export async function updatePlayerHandler(req: Request, res: Response) {
   const updated = await cricketService.updatePlayer(parseId(req.params.id), playerSchema.parse(req.body));
+  res.json({ data: updated });
+}
+
+export async function updatePlayerStyleHandler(req: Request, res: Response) {
+  const updated = await cricketService.updatePlayerStyle(
+    parseId(req.params.id),
+    playerStyleSchema.parse(req.body),
+    viewerOf(req).isSuperAdmin,
+  );
   res.json({ data: updated });
 }
 

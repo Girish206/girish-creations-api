@@ -13,7 +13,7 @@ import { holdUntilChanged } from "./cricket-live";
 const publicPlayers = async (ids: bigint[]) =>
   prisma.cricketPlayer.findMany({
     where: { id: { in: [...new Set(ids)] } },
-    select: { id: true, name: true, role: true, photoUrl: true },
+    select: { id: true, name: true, role: true, battingStyle: true, bowlingStyle: true, photoUrl: true },
   });
 
 const tournamentCard = (t: { id: bigint; name: string; logoUrl: string | null; isPublic: boolean | null }) => ({
