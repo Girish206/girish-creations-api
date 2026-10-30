@@ -67,6 +67,19 @@ export async function unfollow(adminId: bigint, target: FollowTarget) {
   return listMyFollows(adminId);
 }
 
+// Who follows the target and, for a player, what they follow, newest
+// first: the profile's Followers / Following lists (the app fills in the
+// names from the players and tournaments it already has).
+export async function followLists(target: FollowTarget) {
+  const [followers, following] = await Promise.all([
+    prisma.cricketFollow.findMany({ where: whereTarget(target), orderBy: { createdAt: "desc" } }),
+    target.kind === "player"
+      ? prisma.cricketFollow.findMany({ where: { followerId: target.targetId }, orderBy: { createdAt: "desc" } })
+      : [],
+  ]);
+  return { followers, following };
+}
+
 // How many follow the target; for a player, also how many they follow.
 export async function followCounts(target: FollowTarget) {
   const [followers, following] = await Promise.all([

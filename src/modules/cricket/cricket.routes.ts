@@ -86,7 +86,13 @@ import {
   undoBallHandler,
   updateMatchHandler,
 } from "./cricket-match.controller";
-import { followCountsHandler, followHandler, listMyFollowsHandler, unfollowHandler } from "./cricket-follow.controller";
+import {
+  followCountsHandler,
+  followHandler,
+  followListsHandler,
+  listMyFollowsHandler,
+  unfollowHandler,
+} from "./cricket-follow.controller";
 import {
   addSavedTeamPlayersHandler,
   createSavedTeamHandler,
@@ -211,6 +217,7 @@ cricketAdminRouter.get("/tournaments", asyncHandler(listTournamentsHandler));
 cricketAdminRouter.get("/tournaments/:id", asyncHandler(getTournamentHandler));
 cricketAdminRouter.get("/follows", asyncHandler(listMyFollowsHandler));
 cricketAdminRouter.get("/follows/counts", asyncHandler(followCountsHandler));
+cricketAdminRouter.get("/follows/lists", asyncHandler(followListsHandler));
 cricketAdminRouter.post("/follows", asyncHandler(followHandler));
 cricketAdminRouter.delete("/follows", asyncHandler(unfollowHandler));
 cricketAdminRouter.get("/matches", asyncHandler(listMatchesHandler));

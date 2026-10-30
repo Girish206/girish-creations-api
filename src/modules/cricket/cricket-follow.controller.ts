@@ -29,3 +29,7 @@ export async function unfollowHandler(req: Request, res: Response) {
 export async function followCountsHandler(req: Request, res: Response) {
   res.json({ data: await followService.followCounts(targetSchema.parse(req.query)) });
 }
+
+export async function followListsHandler(req: Request, res: Response) {
+  res.json({ data: await followService.followLists(targetSchema.parse(req.query)) });
+}

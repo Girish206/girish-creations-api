@@ -719,6 +719,9 @@ model CricketMatch {
   // 0 or 1 when completed with a winner; null for a tie or no result.
   winner          Int?
   resultText      String?            @map("result_text")
+  // When it finished (completed or abandoned); null while it's on, and
+  // cleared when it's reopened. Its details stay editable for a day after.
+  completedAt     DateTime?          @map("completed_at")
   // How a result entered by hand was decided: "super-over", "walkover",
   // "forfeit", "concede", "dls", "bowl-out" or "other". Null = played out.
   resultMethod    String?            @map("result_method")

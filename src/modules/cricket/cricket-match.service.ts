@@ -255,11 +255,40 @@ export async function createMatch(input: CricketMatchInput, createdById: bigint)
   });
 }
 
+// A finished match's details can still be fixed for a day after it ends.
+const EDIT_AFTER_FINISH_MS = 24 * 60 * 60 * 1000;
+
+// When a match finished: stamped since completedAt was added; older ones go
+// by their last ball (null when there's neither).
+function finishedAt(match: CricketMatch): Date | null {
+  if (match.completedAt) return match.completedAt;
+  const times = match.innings.flatMap((innings) => innings.balls.map((ball) => ball.at?.getTime() ?? 0));
+  const last = Math.max(0, ...times);
+  return last ? new Date(last) : null;
+}
+
 // Edits a match that hasn't started (its details, and a standalone one's
 // names), or a live one's details only — its sides and XIs stay as they are,
-// and so does the length of an over.
+// and so does the length of an over. For a day after it finishes, where and
+// when it was played can still be fixed; the overs and the playing rules
+// stay as it was scored.
 export async function updateMatch(id: bigint, input: Omit<CricketMatchInput, "tournamentId">) {
   const match = await getMatchOrThrow(id);
+  if (match.status === "completed" || match.status === "abandoned") {
+    const ended = finishedAt(match);
+    if (!ended || Date.now() - ended.getTime() > EDIT_AFTER_FINISH_MS) {
+      throw BadRequestError("A finished match can only be edited for a day after it ends — reopen it first");
+    }
+    const {
+      overs: _overs,
+      ballsPerOver: _ballsPerOver,
+      bowlerOverLimit: _bowlerOverLimit,
+      lastManStands: _lastManStands,
+      freeHit: _freeHit,
+      ...details
+    } = matchDetails(input);
+    return prisma.cricketMatch.update({ where: { id }, data: details });
+  }
   if (match.status === "live") {
     // Cutting the overs (e.g. for rain) can't undo overs already bowled, or
     // end the innings in progress. A finished innings keeps the overs it
@@ -504,6 +533,10 @@ async function saveMatch(match: CricketMatch, extra: Prisma.CricketMatchUpdateMa
       winner: match.winner,
       resultText: match.resultText,
       resultMethod: match.resultMethod,
+      // Stamped once when it finishes (a later write, like a corrected ball,
+      // keeps it); cleared when it's back on.
+      completedAt:
+        match.status === "completed" || match.status === "abandoned" ? (match.completedAt ?? new Date()) : null,
       version: version + 1,
       ...extra,
     },
