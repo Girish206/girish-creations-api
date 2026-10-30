@@ -65,6 +65,7 @@ import {
   addBallHandler,
   changeSquadHandler,
   declareResultHandler,
+  interruptionHandler,
   editBallHandler,
   isOrganiser,
   reopenMatchHandler,
@@ -323,6 +324,7 @@ cricketAdminRouter.post("/matches/:id/balls", scoreMatch, holdSeat, asyncHandler
 cricketAdminRouter.delete("/matches/:id/balls/last", scoreMatch, holdSeat, asyncHandler(undoBallHandler));
 cricketAdminRouter.post("/matches/:id/end-innings", scoreMatch, holdSeat, asyncHandler(endInningsHandler));
 cricketAdminRouter.post("/matches/:id/abandon", scoreMatch, holdSeat, asyncHandler(abandonMatchHandler));
+cricketAdminRouter.post("/matches/:id/interruption", scoreMatch, holdSeat, asyncHandler(interruptionHandler));
 // Corrections: an earlier ball, and a late arrival or substitute.
 cricketAdminRouter.put("/matches/:id/balls/:innings/:ball", scoreMatch, holdSeat, asyncHandler(editBallHandler));
 cricketAdminRouter.post("/matches/:id/squad", scoreMatch, holdSeat, asyncHandler(changeSquadHandler));

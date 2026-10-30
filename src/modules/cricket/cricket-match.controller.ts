@@ -310,6 +310,14 @@ export async function declareResultHandler(req: Request, res: Response) {
   res.json({ data: await matchService.declareResult(parseId(req.params.id), resultSchema.parse(req.body)) });
 }
 
+// Rain: the batting side's overs now, or null for no more play.
+const interruptionSchema = z.object({ overs: z.number().int().min(1).max(50).nullable() });
+
+export async function interruptionHandler(req: Request, res: Response) {
+  const { overs } = interruptionSchema.parse(req.body);
+  res.json({ data: await matchService.recordInterruption(parseId(req.params.id), overs) });
+}
+
 export async function reopenMatchHandler(req: Request, res: Response) {
   res.json({ data: await matchService.reopenMatch(parseId(req.params.id), scorerOf(req)) });
 }

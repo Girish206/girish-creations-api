@@ -523,7 +523,8 @@ export async function getMe(adminId: bigint) {
     accountMobile: account?.mobile ?? null,
     tournaments,
     matches,
-    followedTournaments,
+    // Followed ones aren't theirs, so no organiser contacts.
+    followedTournaments: followedTournaments.map((t) => withoutContacts(t, { adminId, isSuperAdmin: false }, player.id)),
     followedMatches,
     followedPlayerMatches,
     createdTournaments,
@@ -551,8 +552,11 @@ export async function getPlayerCareer(playerId: bigint, viewer: { adminId: bigin
     }),
     prisma.cricketTournament.findMany({ where: { playerIds: { has: playerId } }, orderBy: { createdAt: "desc" } }),
   ]);
-  const canView = await matchViewCheck(viewer);
-  return { matches: matches.filter(canView), tournaments: tournaments.map((t) => withoutContacts(t, viewer)) };
+  const [canView, me] = await Promise.all([matchViewCheck(viewer), findMyPlayer(viewer.adminId)]);
+  return {
+    matches: matches.filter(canView),
+    tournaments: tournaments.map((t) => withoutContacts(t, viewer, me?.id ?? null)),
+  };
 }
 
 // assertCanViewMatch for many matches at once: what the viewer follows and
@@ -595,13 +599,23 @@ export async function matchViewCheck(viewer: { adminId: bigint; isSuperAdmin: bo
   };
 }
 
-// The organiser's phone and email are for the people in a tournament (its
-// page needs a follow); the full list everyone browses leaves them out.
-export function withoutContacts<T extends { createdById: bigint | null; organiserMobile: string | null; organiserEmail: string | null }>(
-  tournament: T,
-  viewer: { adminId: bigint; isSuperAdmin: boolean },
-): T {
+// The organiser's phone and email are only for the people in a tournament:
+// its squad, scorers and organisers. Followers and everyone else browsing
+// get the tournament without them.
+export function withoutContacts<
+  T extends {
+    createdById: bigint | null;
+    organiserMobile: string | null;
+    organiserEmail: string | null;
+    playerIds: bigint[];
+    scorerIds: bigint[];
+    organiserIds: bigint[];
+  },
+>(tournament: T, viewer: { adminId: bigint; isSuperAdmin: boolean }, playerId: bigint | null): T {
   if (viewer.isSuperAdmin || tournament.createdById === viewer.adminId) return tournament;
+  if (playerId !== null && [tournament.playerIds, tournament.scorerIds, tournament.organiserIds].some((ids) => ids.includes(playerId))) {
+    return tournament;
+  }
   return { ...tournament, organiserMobile: null, organiserEmail: null };
 }
 
@@ -918,6 +932,9 @@ export async function mergePlayers(fromId: bigint, intoId: bigint) {
 
 export interface CricketTournamentInput {
   name: string;
+  // Left out keeps them as they are.
+  seriesName?: string | null;
+  season?: string | null;
   city?: string | null;
   ground?: string | null;
   organiserName?: string | null;
@@ -948,8 +965,11 @@ const conditionsOf = (input: CricketTournamentInput) =>
     Pick<CricketTournamentInput, (typeof CONDITIONS)[number]>
   >;
 
-// The descriptive fields, with anything left out cleared.
+// The descriptive fields, with anything left out cleared (but the series
+// and season, which an older client doesn't send, are kept).
 const tournamentDetails = (input: CricketTournamentInput) => ({
+  ...(input.seriesName !== undefined ? { seriesName: input.seriesName } : {}),
+  ...(input.season !== undefined ? { season: input.season } : {}),
   city: input.city ?? null,
   ground: input.ground ?? null,
   organiserName: input.organiserName ?? null,
@@ -965,8 +985,11 @@ const tournamentDetails = (input: CricketTournamentInput) => ({
 });
 
 export async function listTournaments(viewer: { adminId: bigint; isSuperAdmin: boolean }) {
-  const tournaments = await prisma.cricketTournament.findMany({ orderBy: { createdAt: "desc" } });
-  return tournaments.map((tournament) => withoutContacts(tournament, viewer));
+  const [tournaments, me] = await Promise.all([
+    prisma.cricketTournament.findMany({ orderBy: { createdAt: "desc" } }),
+    findMyPlayer(viewer.adminId),
+  ]);
+  return tournaments.map((tournament) => withoutContacts(tournament, viewer, me?.id ?? null));
 }
 
 async function getTournamentOrThrow(id: bigint) {

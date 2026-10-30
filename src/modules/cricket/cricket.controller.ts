@@ -90,6 +90,9 @@ const CATEGORIES = ["open", "corporate", "community", "school", "other", "series
 const tournamentSchema = z
   .object({
     name: z.string().trim().min(1).max(150),
+    // Left out keeps them (older clients don't send them).
+    seriesName: optionalText(100).optional(),
+    season: optionalText(40).optional(),
     city: optionalText(100),
     ground: optionalText(150),
     organiserName: optionalText(100),
@@ -268,8 +271,10 @@ export async function listTournamentsHandler(req: Request, res: Response) {
 
 export async function getTournamentHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  await cricketService.assertCanViewTournament(id, viewerOf(req));
-  res.json({ data: await cricketService.getTournament(id) });
+  const viewer = viewerOf(req);
+  await cricketService.assertCanViewTournament(id, viewer);
+  const [tournament, me] = await Promise.all([cricketService.getTournament(id), cricketService.findMyPlayer(viewer.adminId)]);
+  res.json({ data: cricketService.withoutContacts(tournament, viewer, me?.id ?? null) });
 }
 
 export async function createTournamentHandler(req: Request, res: Response) {

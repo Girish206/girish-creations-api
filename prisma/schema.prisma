@@ -536,6 +536,10 @@ type CricketTeam {
 model CricketTournament {
   id              BigInt            @id @default(0) @map("_id")
   name            String
+  // A recurring tournament's seasons share a series name ("Ward Premier
+  // League") and each has its own season label ("2025", "Season 3").
+  seriesName      String?           @map("series_name")
+  season          String?
   // The squad: which players from the shared list take part. Only they can
   // be matched into sets.
   playerIds       BigInt[]          @map("player_ids")
@@ -645,6 +649,18 @@ type CricketBall {
   boundary     Boolean?
 }
 
+// A stoppage that cut an innings' overs (or ended it): when it came, and
+// the batting side's balls still to come before and after.
+type CricketInterruption {
+  // 0 = first innings, 1 = the chase.
+  innings         Int
+  balls           Int
+  wickets         Int
+  ballsLeftBefore Int      @map("balls_left_before")
+  ballsLeftAfter  Int      @map("balls_left_after")
+  at              DateTime
+}
+
 type CricketInnings {
   // 0 or 1: index into the match's teams.
   battingTeam  Int           @map("batting_team")
@@ -727,6 +743,11 @@ model CricketMatch {
   resultMethod    String?            @map("result_method")
   // The chasing side's target after a rain cut (null = first innings + 1).
   revisedTarget   Int?               @map("revised_target")
+  // Rain stoppages recorded by the scorer, which set the revised target by
+  // the Duckworth-Lewis method (see cricket-dls.ts), and the overs per side
+  // the match had before the first one (null = never interrupted).
+  interruptions   CricketInterruption[]
+  scheduledOvers  Int?               @map("scheduled_overs")
   // Balls in an over (null = 6; 5 for The Hundred).
   ballsPerOver    Int?               @map("balls_per_over")
   // Most overs one bowler may bowl (null = no limit).

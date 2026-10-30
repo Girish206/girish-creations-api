@@ -15,6 +15,7 @@ import {
 import { assertRoles, matchAccessOf, rolesWithin, tournamentTeamLogo, type TeamRoles } from "./cricket.service";
 import { savedTeamByKey } from "./cricket-team.service";
 import { notifyMatch } from "./cricket-push";
+import { chaseStartBalls, dlsPar, dlsResources, minResultBalls } from "./cricket-dls";
 
 const newTeamKey = () => `f:${randomUUID()}`;
 
@@ -533,6 +534,10 @@ async function saveMatch(match: CricketMatch, extra: Prisma.CricketMatchUpdateMa
       winner: match.winner,
       resultText: match.resultText,
       resultMethod: match.resultMethod,
+      overs: match.overs,
+      revisedTarget: match.revisedTarget,
+      interruptions: match.interruptions ?? [],
+      scheduledOvers: match.scheduledOvers,
       // Stamped once when it finishes (a later write, like a corrected ball,
       // keeps it); cleared when it's back on.
       completedAt:
@@ -599,7 +604,11 @@ function completeMatch(match: CricketMatch) {
   const chase = inningsSummary(second.balls);
   const chasingSide = match.teams[second.battingTeam];
   const defendingSide = match.teams[first.battingTeam];
-  const revised = match.revisedTarget !== null && match.revisedTarget !== undefined ? " (revised target)" : "";
+  const revised = match.interruptions?.length
+    ? " (DLS)"
+    : match.revisedTarget !== null && match.revisedTarget !== undefined
+      ? " (revised target)"
+      : "";
   match.status = "completed";
   match.resultMethod = null;
   if (chase.runs >= target) {
@@ -624,11 +633,13 @@ function closeOpenInnings(innings: CricketInnings) {
   innings.bowlerId = null;
 }
 
-// Closes the current innings; after the first, the other side bats next.
+// Closes the current innings; after the first, the other side bats next
+// (with a DLS target if rain cut the first innings).
 function closeInnings(match: CricketMatch, innings: CricketInnings) {
   closeOpenInnings(innings);
   if (match.innings.length === 1) {
     match.innings.push(newInnings(1 - innings.battingTeam));
+    if (match.interruptions?.length) setDlsTarget(match);
   } else {
     completeMatch(match);
   }
@@ -857,6 +868,93 @@ export async function abandonMatch(id: bigint) {
   const saved = await saveMatch(match, { scoringById: null, scoringByName: null, scoringSeenAt: null });
   await notifyMatch(saved, "result");
   return saved;
+}
+
+// ===== Rain (Duckworth-Lewis) =====
+
+// The chase's par score by the D/L tables as things stand; the target is
+// one more.
+function dlsParOf(match: CricketMatch) {
+  const interruptions = match.interruptions ?? [];
+  const { r1, r2 } = dlsResources(
+    match.scheduledOvers ?? match.overs,
+    chaseStartBalls(interruptions, match.overs),
+    interruptions,
+  );
+  return dlsPar(inningsSummary(match.innings[0].balls).runs, r1, r2);
+}
+
+function setDlsTarget(match: CricketMatch) {
+  match.revisedTarget = dlsParOf(match) + 1;
+}
+
+// Rain stops play: the batting side now has `overs` in all (both sides do,
+// during the first innings), or with `overs` null there's no more play in
+// this innings. Cutting the first innings sets the chase's target when it
+// ends; during the chase the target is revised at once, and with no more
+// play the chase is decided on the par score.
+export async function recordInterruption(id: bigint, overs: number | null) {
+  const match = await getMatchOrThrow(id);
+  if (match.status !== "live") throw BadRequestError("Only a match in progress can be interrupted");
+  if (ballsPerOver(match) !== 6) throw BadRequestError("The DLS method works with six-ball overs");
+  const scheduled = match.scheduledOvers ?? match.overs;
+  if (scheduled > 50) throw BadRequestError("The DLS tables go up to 50 overs a side");
+  const index = match.innings.length - 1;
+  const innings = match.innings[index];
+  const now = inningsSummary(innings.balls);
+  const ballsLeftBefore = match.overs * 6 - now.legalBalls;
+  if (overs !== null) {
+    if (overs >= match.overs) throw BadRequestError(`Fewer than the ${match.overs} overs they have now`);
+    if (overs * 6 <= now.legalBalls) {
+      throw BadRequestError(`${Math.floor(now.legalBalls / 6) + 1} overs at least — some have already been bowled`);
+    }
+  }
+  match.scheduledOvers = scheduled;
+  match.interruptions = [
+    ...(match.interruptions ?? []),
+    {
+      innings: index,
+      balls: now.legalBalls,
+      wickets: now.wickets,
+      ballsLeftBefore,
+      ballsLeftAfter: overs === null ? 0 : overs * 6 - now.legalBalls,
+      at: new Date(),
+    },
+  ];
+  if (overs !== null) match.overs = overs;
+
+  if (index === 0) {
+    if (overs === null) closeInnings(match, innings);
+    return saveMatch(match);
+  }
+  setDlsTarget(match);
+  if (overs !== null) {
+    if (now.runs >= match.revisedTarget!) completeMatch(match);
+    return saveScore(match, true);
+  }
+  // No more play in the chase: ahead of par wins, level ties, behind loses —
+  // by the runs between them — provided they faced enough overs.
+  closeOpenInnings(innings);
+  const par = dlsParOf(match);
+  const [first, second] = match.innings;
+  match.resultMethod = "dls";
+  if (now.legalBalls < minResultBalls(scheduled)) {
+    match.status = "abandoned";
+    match.winner = null;
+    match.resultText = "No result (too few overs for DLS)";
+  } else {
+    match.status = "completed";
+    if (now.runs === par) {
+      match.winner = null;
+      match.resultText = "Match tied (DLS)";
+    } else {
+      const ahead = now.runs > par;
+      const margin = Math.abs(now.runs - par);
+      match.winner = ahead ? second.battingTeam : first.battingTeam;
+      match.resultText = `${match.teams[match.winner].name} won by ${margin} run${margin === 1 ? "" : "s"} (DLS)`;
+    }
+  }
+  return saveScore(match, true);
 }
 
 export type ResultMethod = "super-over" | "walkover" | "forfeit" | "concede" | "dls" | "bowl-out" | "other";
