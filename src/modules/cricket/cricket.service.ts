@@ -7,6 +7,7 @@ import { assertMobileFree } from "../admin-user/admin-user.service";
 import { deleteUploadedFile, uploadFile } from "../../middleware/upload";
 import { normalizeMobile } from "../../utils/mobile";
 import { assertWithinLimit } from "../../middleware/rateLimit";
+import { renameInMvpLock } from "./cricket-mvp-lock";
 
 // ===== Players =====
 
@@ -890,6 +891,7 @@ export async function mergePlayers(fromId: bigint, intoId: bigint) {
       where: { id: m.id },
       data: {
         playerOfMatchId: one(m.playerOfMatchId),
+        ...(m.mvpLock ? { mvpLock: renameInMvpLock(m.mvpLock, fromId, intoId) } : {}),
         teams: m.teams.map((team) => ({
           ...team,
           playerIds: swap(team.playerIds),

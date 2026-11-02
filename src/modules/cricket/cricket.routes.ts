@@ -83,6 +83,7 @@ import {
   setCurrentPlayersHandler,
   setMatchScorersHandler,
   setPlayerOfMatchHandler,
+  lockMvpHandler,
   startMatchHandler,
   undoBallHandler,
   updateMatchHandler,
@@ -332,3 +333,4 @@ cricketAdminRouter.post("/matches/:id/squad", scoreMatch, holdSeat, asyncHandler
 cricketAdminRouter.post("/matches/:id/result", organiseMatch, asyncHandler(declareResultHandler));
 cricketAdminRouter.post("/matches/:id/reopen", organiseMatch, asyncHandler(reopenMatchHandler));
 cricketAdminRouter.put("/matches/:id/player-of-match", scoreMatch, asyncHandler(setPlayerOfMatchHandler));
+cricketAdminRouter.put("/matches/:id/mvp-lock", scoreMatch, asyncHandler(lockMvpHandler));

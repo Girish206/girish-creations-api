@@ -5,6 +5,7 @@ import { BadRequestError, ConflictError, HttpError, NotFoundError } from "../../
 import {
   ballsPerOver,
   cantBat,
+  flipStrikeAfter,
   FREE_HIT_OUTS,
   INCOMING_OUTS,
   inningsSummary,
@@ -16,6 +17,7 @@ import { assertRoles, matchAccessOf, rolesWithin, tournamentTeamLogo, type TeamR
 import { savedTeamByKey } from "./cricket-team.service";
 import { notifyMatch } from "./cricket-push";
 import { chaseStartBalls, dlsPar, dlsResources, minResultBalls } from "./cricket-dls";
+import type { MvpLock } from "./cricket-mvp-lock";
 
 const newTeamKey = () => `f:${randomUUID()}`;
 
@@ -543,6 +545,8 @@ async function saveMatch(match: CricketMatch, extra: Prisma.CricketMatchUpdateMa
       completedAt:
         match.status === "completed" || match.status === "abandoned" ? (match.completedAt ?? new Date()) : null,
       version: version + 1,
+      // The score changed, so its locked MVP points no longer match it.
+      mvpLock: null,
       ...extra,
     },
   });
@@ -1045,9 +1049,10 @@ export interface BallEditInput {
 const SWAPPABLE_OUTS = ["bowled", "caught", "caught-behind", "lbw", "stumped", "hit-wicket"];
 
 // Corrects an earlier ball without replaying the innings: who fielded, the
-// kind of dismissal, its runs (only to a number that leaves the batters at
-// the same ends), whether it was a boundary, or the over's bowler. A
-// finished match's result is worked out again.
+// kind of dismissal, its runs (the strike on the balls after it follows, see
+// flipStrikeAfter), whether it was a boundary, or the over's bowler. A
+// finished match's result is worked out again, and a chase the correction
+// takes to the target ends there.
 export async function editBall(id: bigint, inningsIndex: number, ballIndex: number, input: BallEditInput) {
   const match = await getMatchOrThrow(id);
   if (match.status !== "live" && match.status !== "completed") throw BadRequestError("Only a started match's balls can be corrected");
@@ -1055,10 +1060,11 @@ export async function editBall(id: bigint, inningsIndex: number, ballIndex: numb
   const ball = innings?.balls[ballIndex];
   if (!ball) throw NotFoundError("Ball not found");
   const fielding = match.teams[1 - innings.battingTeam].playerIds;
+  const wasLive = match.status === "live";
   if (input.runs !== undefined) {
     if (ball.noDelivery) throw BadRequestError("Nothing was bowled then");
-    if (input.runs % 2 !== ball.runs % 2) throw BadRequestError("Runs can only change by an even number (the batters stay at their ends)");
     if (ball.extraType !== null && ball.extraType !== "no-ball") throw BadRequestError("No runs off the bat on that ball");
+    if (input.runs % 2 !== ball.runs % 2) flipStrikeAfter(innings, ballIndex, ballsPerOver(match));
     ball.runs = input.runs;
   }
   for (const key of ["fielderId", "secondFielderId"] as const) {
@@ -1091,7 +1097,10 @@ export async function editBall(id: bigint, inningsIndex: number, ballIndex: numb
     if (innings.bowlerId !== null && overOf[ballIndex] === Math.floor(legal / perOver)) innings.bowlerId = input.bowlerId;
   }
   if (match.status === "completed" && !match.resultMethod && match.innings.length === 2) completeMatch(match);
-  return saveMatch(match);
+  if (wasLive && input.runs !== undefined && innings === match.innings[1] && !innings.closed && inningsSummary(innings.balls).runs >= targetOf(match)) {
+    closeInnings(match, innings);
+  }
+  return saveScore(match, wasLive);
 }
 
 // Adds a player to a side during a live match — a late arrival, or a
@@ -1126,4 +1135,25 @@ export async function setPlayerOfMatch(id: bigint, playerId: bigint | null) {
     throw BadRequestError("Pick a player who played in this match");
   }
   return prisma.cricketMatch.update({ where: { id }, data: { playerOfMatchId: playerId } });
+}
+
+// Locks a finished match's MVP points and awards, as worked out on the copy at
+// `version`. The first lock stands; a changed score clears it (see saveMatch).
+export async function lockMvp(id: bigint, version: number, lock: MvpLock) {
+  const match = await getMatchOrThrow(id);
+  if (match.status !== "completed" && match.status !== "abandoned") {
+    throw BadRequestError("Only a finished match's MVP points can be locked");
+  }
+  if (match.mvpLock) return match;
+  const { count } = await prisma.cricketMatch.updateMany({
+    where: {
+      id,
+      OR: version === 0 ? [{ version: 0 }, { version: null }, { version: { isSet: false } }] : [{ version }],
+    },
+    data: { mvpLock: lock as unknown as Prisma.InputJsonValue },
+  });
+  if (count === 0) {
+    throw new HttpError(409, "The score changed on another device — showing the latest", "STALE_SCORE");
+  }
+  return getMatchOrThrow(id);
 }

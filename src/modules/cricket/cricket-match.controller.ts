@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import * as matchService from "./cricket-match.service";
 import { holdUntilChanged } from "./cricket-live";
+import { mvpLockSchema } from "./cricket-mvp-lock";
 import { EXTRA_TYPES, NO_DELIVERY_ALLOWED, NO_DELIVERY_ONLY, WICKET_TYPES } from "./cricket.scoring";
 import { parseId } from "../../utils/parseId";
 import { BadRequestError, ForbiddenError } from "../../utils/httpError";
@@ -181,6 +182,7 @@ const ballSchema = z
   });
 
 const playerOfMatchSchema = z.object({ playerId: id.nullable() });
+const lockMvpSchema = z.object({ version: z.number().int().min(0), lock: mvpLockSchema });
 
 // One tournament's matches (one the viewer can open), tournamentId=none for
 // the standalone ones, or every match. Players get only the matches they
@@ -365,4 +367,9 @@ export async function setMatchScorersHandler(req: Request, res: Response) {
 export async function setPlayerOfMatchHandler(req: Request, res: Response) {
   const { playerId } = playerOfMatchSchema.parse(req.body);
   res.json({ data: await matchService.setPlayerOfMatch(parseId(req.params.id), playerId) });
+}
+
+export async function lockMvpHandler(req: Request, res: Response) {
+  const { version, lock } = lockMvpSchema.parse(req.body);
+  res.json({ data: await matchService.lockMvp(parseId(req.params.id), version, lock) });
 }

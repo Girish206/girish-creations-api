@@ -60,6 +60,62 @@ export function runsRun(ball: BallLike) {
   return ball.runs + ball.extras - penalty;
 }
 
+export interface CreaseBall extends BallLike {
+  batterId: bigint;
+  nonStrikerId: bigint;
+  dismissedId: bigint | null;
+  outEnd?: string | null;
+}
+
+type Ends = [bigint | null, bigint | null];
+
+// Who's at which end once a ball is done; null = gone, a batter yet to come.
+function creaseAfter(ball: CreaseBall, overEnded: boolean): Ends {
+  let ends: Ends = [ball.batterId, ball.nonStrikerId];
+  // Penalty runs are awarded, not run.
+  if (ball.extraType === "penalty") return ends;
+  if (runsRun(ball) % 2 === 1) ends = [ends[1], ends[0]];
+  if (ball.dismissedId !== null) {
+    if (ball.wicketType === "run-out" && ball.outEnd) {
+      const survivor = ball.dismissedId === ball.batterId ? ball.nonStrikerId : ball.batterId;
+      ends = ball.outEnd === "striker" ? [null, survivor] : [survivor, null];
+    } else {
+      ends = [ends[0] === ball.dismissedId ? null : ends[0], ends[1] === ball.dismissedId ? null : ends[1]];
+    }
+  }
+  return overEnded ? [ends[1], ends[0]] : ends;
+}
+
+// A corrected ball now has the batters finishing at the other ends, so the
+// balls after it were faced by the other batter. Call it before changing the
+// ball's runs. It stops at the next dismissal, which stays with the batter
+// recorded as out (the rest of the innings then stands as it was), and where
+// the scorer changed the strike by hand, which already put the crease right.
+export function flipStrikeAfter(
+  innings: { balls: CreaseBall[]; strikerId: bigint | null; nonStrikerId: bigint | null },
+  index: number,
+  perOver: number,
+) {
+  const { balls } = innings;
+  const corrected = balls[index];
+  // Alone there's no other end, and a run-out's end places the survivor
+  // whatever was run.
+  if (corrected.batterId === corrected.nonStrikerId || (corrected.wicketType === "run-out" && corrected.outEnd)) return;
+  const matches = (expected: Ends, striker: bigint | null, nonStriker: bigint | null) =>
+    (expected[0] === null || expected[0] === striker) && (expected[1] === null || expected[1] === nonStriker);
+  let legal = balls.slice(0, index + 1).filter(isLegal).length;
+  let expected = creaseAfter(corrected, isLegal(corrected) && legal % perOver === 0);
+  for (const ball of balls.slice(index + 1)) {
+    if (ball.dismissedId !== null || !matches(expected, ball.batterId, ball.nonStrikerId)) return;
+    if (isLegal(ball)) legal++;
+    expected = creaseAfter(ball, isLegal(ball) && legal % perOver === 0);
+    [ball.batterId, ball.nonStrikerId] = [ball.nonStrikerId, ball.batterId];
+  }
+  if (matches(expected, innings.strikerId, innings.nonStrikerId)) {
+    [innings.strikerId, innings.nonStrikerId] = [innings.nonStrikerId, innings.strikerId];
+  }
+}
+
 export function inningsSummary(balls: BallLike[]) {
   return {
     runs: balls.reduce((sum, ball) => sum + ballTotal(ball), 0),

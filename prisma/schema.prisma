@@ -762,6 +762,10 @@ model CricketMatch {
   // phone, a retried request) is refused instead of overwriting (null = 0).
   version         Int?
   playerOfMatchId BigInt?            @map("player_of_match_id")
+  // Its MVP points and awards as they stood when it finished, so changing the
+  // rules later leaves it alone. Worked out by the client, which holds the
+  // rules (see matchImpact in stats.ts); cleared by any change to the score.
+  mvpLock         Json?              @map("mvp_lock")
   // Players added to score (and edit) this match, along with its
   // organisers and both captains.
   scorerIds       BigInt[]           @map("scorer_ids")
