@@ -1,5 +1,10 @@
+// Which app a sign-in is for. The password is shared, but a session from one
+// is refused by the other.
+export type AuthApp = "admin" | "cricket";
+
 export interface AdminTokenPayload {
   sub: string;
+  app: AuthApp;
   // Null for an account that signs in with its mobile number only.
   email: string | null;
   name: string | null;

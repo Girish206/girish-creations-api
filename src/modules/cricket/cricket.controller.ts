@@ -169,13 +169,13 @@ export async function signInLookupHandler(req: Request, res: Response) {
 // Public: creates the account and signs straight in (a remembered session).
 export async function signUpHandler(req: Request, res: Response) {
   const account = await cricketService.signUp(signUpSchema.parse(req.body));
-  res.status(201).json({ data: issueToken(account, true) });
+  res.status(201).json({ data: issueToken(account, "cricket", true) });
 }
 
 // Returns a fresh token, since the name and mobile ride in it.
 export async function updateMyProfileHandler(req: Request, res: Response) {
   const account = await cricketService.updateMyProfile(viewerOf(req).adminId, profileSchema.parse(req.body));
-  res.json({ data: issueToken(account, Boolean(req.admin!.remember)) });
+  res.json({ data: issueToken(account, "cricket", Boolean(req.admin!.remember)) });
 }
 
 export async function setMyPhotoHandler(req: Request, res: Response) {

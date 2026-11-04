@@ -200,6 +200,7 @@ export async function revokePlayerLogin(id: bigint) {
   const account = await accountForMobile(player.mobile);
   if (!account) return;
   const cricketOnly =
+    !account.listedInAdmin &&
     !account.email &&
     !account.isOwner &&
     !account.isSuperAdmin &&

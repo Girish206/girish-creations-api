@@ -25,6 +25,7 @@ const createSchema = z.object({
   email: emailSchema.nullable().optional(),
   mobile: mobileSchema.nullable().optional(),
   password: z.string().min(8).nullable().optional(),
+  grantLogin: z.boolean().optional(),
   name: z.string().nullable().optional(),
   hasPortfolioAccess: z.boolean().default(false),
   hasExpensesAccess: z.boolean().default(false),

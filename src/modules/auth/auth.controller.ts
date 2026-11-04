@@ -3,16 +3,18 @@ import { z } from "zod";
 import * as authService from "./auth.service";
 
 // `email` holds whatever the user typed: an email address or a mobile number.
-// `remember` asks for a long-lived "keep me signed in" session.
+// `remember` asks for a long-lived "keep me signed in" session. `app` is the
+// app the session will work on.
 const loginSchema = z.object({
+  app: z.enum(["admin", "cricket"]).default("admin"),
   email: z.string().trim().min(1),
   password: z.string().min(1),
   remember: z.boolean().optional(),
 });
 
 export async function loginHandler(req: Request, res: Response) {
-  const { email: identifier, password, remember } = loginSchema.parse(req.body);
-  const { token, admin } = await authService.login(identifier, password, remember);
+  const { email: identifier, password, remember, app } = loginSchema.parse(req.body);
+  const { token, admin } = await authService.login(identifier, password, app, remember);
   res.json({ data: { token, admin } });
 }
 

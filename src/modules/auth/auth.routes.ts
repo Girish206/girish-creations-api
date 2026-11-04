@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth } from "../../middleware/auth";
+import { requireAnyAppAuth } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rateLimit";
 import { loginHandler, logoutHandler, meHandler, refreshHandler } from "./auth.controller";
 
@@ -15,6 +15,6 @@ const loginLimits = [
 ];
 
 authRouter.post("/login", ...loginLimits, asyncHandler(loginHandler));
-authRouter.post("/refresh", requireAdminAuth, asyncHandler(refreshHandler));
-authRouter.get("/me", requireAdminAuth, asyncHandler(meHandler));
-authRouter.post("/logout", requireAdminAuth, asyncHandler(logoutHandler));
+authRouter.post("/refresh", requireAnyAppAuth, asyncHandler(refreshHandler));
+authRouter.get("/me", requireAnyAppAuth, asyncHandler(meHandler));
+authRouter.post("/logout", requireAnyAppAuth, asyncHandler(logoutHandler));

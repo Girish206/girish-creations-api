@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
 import { upload } from "../../middleware/upload";
-import { isSuperAdmin, requireAdminAuth, requireCricketAccess, requireSuperAdmin } from "../../middleware/auth";
+import { isSuperAdmin, requireCricketAccess, requireCricketAuth, requireSuperAdmin } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rateLimit";
 import { prisma } from "../../lib/prisma";
 import { UnauthorizedError } from "../../utils/httpError";
@@ -155,7 +155,7 @@ const currentSession = asyncHandler(async (req, _res, next) => {
   }
   next();
 });
-cricketAdminRouter.use(requireAdminAuth, requireCricketAccess, currentSession);
+cricketAdminRouter.use(requireCricketAuth, requireCricketAccess, currentSession);
 const admin = requireSuperAdmin;
 const manageTournament = asyncHandler(async (req, _res, next) => {
   await assertCanManageTournament(parseId(req.params.id), viewerOf(req));

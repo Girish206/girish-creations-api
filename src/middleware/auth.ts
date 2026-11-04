@@ -2,23 +2,37 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { ForbiddenError, UnauthorizedError } from "../utils/httpError";
-import type { AdminTokenPayload } from "../types/express";
+import type { AdminTokenPayload, AuthApp } from "../types/express";
 
-export function requireAdminAuth(req: Request, _res: Response, next: NextFunction) {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    throw UnauthorizedError("Missing bearer token");
-  }
+// Tokens from before the apps were split carry no `app`, so they're refused
+// everywhere and that person signs in once more.
+function requireSession(apps: AuthApp[]) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) {
+      throw UnauthorizedError("Missing bearer token");
+    }
 
-  const token = header.slice("Bearer ".length);
-  try {
-    const payload = jwt.verify(token, env.jwtSecret) as AdminTokenPayload;
+    let payload: AdminTokenPayload;
+    try {
+      payload = jwt.verify(header.slice("Bearer ".length), env.jwtSecret) as AdminTokenPayload;
+    } catch {
+      throw UnauthorizedError("Invalid or expired token");
+    }
+    if (!apps.includes(payload.app)) {
+      throw UnauthorizedError("This session is for a different app. Sign in again.");
+    }
     req.admin = payload;
     next();
-  } catch {
-    throw UnauthorizedError("Invalid or expired token");
-  }
+  };
 }
+
+// A session from the Girish Creations admin.
+export const requireAdminAuth = requireSession(["admin"]);
+// A session from RunMitra.
+export const requireCricketAuth = requireSession(["cricket"]);
+// Either: for what both apps share (refresh, who am I, sign out).
+export const requireAnyAppAuth = requireSession(["admin", "cricket"]);
 
 export type AdminModule = "portfolio" | "expenses" | "savings";
 

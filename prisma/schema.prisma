@@ -199,7 +199,11 @@ model AdminUser {
   // links an account to its cricket player (same number). Unique, checked
   // in admin-user.service.ts — no index, since most accounts have none.
   mobile               String?
+  // One password for both apps: changing it in either changes it in both.
   passwordHash         String?  @map("password_hash")
+  // A RunMitra player added on the admin side without access: no admin login,
+  // but they appear in the Money Hub's pickers like any other guest.
+  listedInAdmin        Boolean? @map("listed_in_admin")
   name                 String?
   isOwner              Boolean  @default(false) @map("is_owner")
   // Super admins see every account's data in the admin panel (all expenses

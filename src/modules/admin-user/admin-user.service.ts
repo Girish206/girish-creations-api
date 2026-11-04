@@ -1,3 +1,4 @@
+import type { AdminUser } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
@@ -119,6 +120,7 @@ export async function listExpenseMembers() {
         { hasExpensesAccess: true },
         { hasSavingsAccess: true },
         { passwordHash: null },
+        { listedInAdmin: true },
       ],
     },
     select: { id: true, email: true, name: true },
@@ -140,6 +142,9 @@ export interface CreateAdminUserInput {
   email?: string | null;
   mobile?: string | null;
   password?: string | null;
+  // Asks for login access. If the person already has an account (they signed
+  // up on RunMitra), a blank password keeps the one they have.
+  grantLogin?: boolean;
   name?: string | null;
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
@@ -148,28 +153,88 @@ export interface CreateAdminUserInput {
   isSuperAdmin?: boolean;
 }
 
+// What adding a person who already has an account does. Only super admins get
+// this: anyone else could type a number and take over someone's account.
+export function planExistingAccount(
+  existing: Pick<
+    AdminUser,
+    "isActive" | "isOwner" | "isSuperAdmin" | "hasPortfolioAccess" | "hasExpensesAccess" | "hasSavingsAccess" | "passwordHash"
+  >,
+  grantLogin: boolean,
+  actor: Pick<ActingAdmin, "isSuperAdmin">,
+): "grant" | "list" {
+  if (!actor.isSuperAdmin) {
+    throw ConflictError("This person already has an account. Ask a super admin to add them.");
+  }
+  if (!existing.isActive) {
+    throw ConflictError("This person's account is deactivated. Edit that account and tick Active to restore it.");
+  }
+  if (!grantLogin) return "list";
+  const hasAdminAccess =
+    existing.isOwner ||
+    existing.isSuperAdmin ||
+    existing.hasPortfolioAccess ||
+    existing.hasExpensesAccess ||
+    existing.hasSavingsAccess;
+  if (hasAdminAccess && existing.passwordHash !== null) {
+    throw ConflictError("This person already has admin access. Edit their account instead.");
+  }
+  return "grant";
+}
+
+// Someone who signed up on RunMitra is already an account: giving them access
+// here opens the admin to that account, and otherwise they're just listed.
+async function addExistingAccount(existing: AdminUser, input: CreateAdminUserInput, actor: ActingAdmin) {
+  const grantLogin = Boolean(input.grantLogin || input.password);
+  if (planExistingAccount(existing, grantLogin, actor) === "list") {
+    const listed = await prisma.adminUser.update({
+      where: { id: existing.id },
+      data: { listedInAdmin: true, name: existing.name ?? input.name },
+      select: rawSelectFields,
+    });
+    return toDto(listed);
+  }
+
+  // The password is shared, so a new one changes it on RunMitra as well.
+  const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : existing.passwordHash;
+  if (!passwordHash) throw BadRequestError("This person has no password yet. Set one to give them access.");
+  const updated = await prisma.adminUser.update({
+    where: { id: existing.id },
+    data: {
+      passwordHash,
+      name: existing.name ?? input.name,
+      email: existing.email ?? input.email,
+      mobile: existing.mobile ?? input.mobile,
+      hasPortfolioAccess: input.hasPortfolioAccess,
+      hasExpensesAccess: input.hasExpensesAccess,
+      hasSavingsAccess: input.hasSavingsAccess,
+      isSuperAdmin: input.isSuperAdmin || undefined,
+    },
+    select: rawSelectFields,
+  });
+  return toDto(updated);
+}
+
 export async function createAdminUser(input: CreateAdminUserInput, actor: ActingAdmin) {
   assertMemberGrant(actor, input);
   assertCanSetSuperAdmin(actor, input.isSuperAdmin ? true : undefined);
+
+  const byMobile = input.mobile ? await prisma.adminUser.findFirst({ where: { mobile: input.mobile } }) : null;
+  const byEmail = input.email ? await prisma.adminUser.findUnique({ where: { email: input.email } }) : null;
+  if (byMobile && byEmail && byMobile.id !== byEmail.id) {
+    throw ConflictError("This email and this mobile number belong to two different accounts");
+  }
+  const existingAccount = byMobile ?? byEmail;
+  if (existingAccount) return addExistingAccount(existingAccount, input, actor);
+
   if (input.password && !input.email && !input.mobile) {
     throw BadRequestError("Login access needs an email or a mobile number along with the password");
   }
+  if (input.grantLogin && !input.password) {
+    throw BadRequestError("Set a password to give this person login access");
+  }
   if (input.email && !input.password) {
     throw BadRequestError("Provide a password with the email to grant login access, or leave both out for a guest member");
-  }
-  if (input.mobile) await assertMobileFree(input.mobile);
-
-  if (input.email) {
-    const existing = await prisma.adminUser.findUnique({ where: { email: input.email } });
-    if (existing) {
-      // Deleting an account only deactivates it (see deleteAdminUser), so
-      // re-adding the same person lands here — point at the fix.
-      throw ConflictError(
-        existing.isActive
-          ? "An admin user with this email already exists"
-          : "This email belongs to a deactivated account. Edit that account and tick Active to restore it.",
-      );
-    }
   }
 
   const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : null;
