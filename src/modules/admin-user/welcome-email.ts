@@ -36,6 +36,15 @@ export function welcomeAppFor(account: Omit<WelcomeAccount, "email">): AuthApp {
   return usesAdmin || !account.hasCricketAccess ? "admin" : "cricket";
 }
 
+// Every app they can use, the one the email is from first. Someone who only
+// plays cricket isn't sent a link to the admin, or the other way round.
+function appsOf(account: Omit<WelcomeAccount, "email">): AuthApp[] {
+  const main = welcomeAppFor(account);
+  const other: AuthApp = main === "admin" ? "cricket" : "admin";
+  const usesOther = other === "cricket" && account.hasCricketAccess;
+  return usesOther ? [main, other] : [main];
+}
+
 function featuresOf(account: WelcomeAccount) {
   const features = [
     {
@@ -64,7 +73,7 @@ function featuresOf(account: WelcomeAccount) {
 
 // Sent only when someone chooses to from the admin side. The password is never
 // included: they use the one they were given, or set their own with a code.
-export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): EmailMessage {
+export function buildWelcomeEmail(account: WelcomeAccount, appUrls: Partial<Record<AuthApp, string>> = {}): EmailMessage {
   const brand = BRANDS[welcomeAppFor(account)];
   const firstName = account.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
@@ -75,6 +84,10 @@ export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): 
     "Use the password you were given or already have. To choose a new one, select Forgot password on the sign-in page and we'll email you a code.";
   const security = "For your security, we never send passwords by email and will never ask you for yours.";
   const help = "Need a hand? Just reply to this email and we'll help you out.";
+  const appLinks = appsOf(account).flatMap((app) => {
+    const url = appUrls[app];
+    return url ? [{ brand: BRANDS[app], url }] : [];
+  });
 
   return {
     fromName: brand.name,
@@ -94,7 +107,7 @@ export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): 
       `Email: ${account.email}`,
       ...(account.mobile ? [`Or mobile: ${account.mobile}`] : []),
       `Password: ${passwordHelp}`,
-      ...(signInUrl ? ["", `Sign in: ${signInUrl}`] : []),
+      ...(appLinks.length ? ["", ...appLinks.map((app) => `Sign in to ${app.brand.name}: ${app.url}`)] : []),
       "",
       security,
       help,
@@ -121,7 +134,19 @@ export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): 
           ...(account.mobile ? [{ label: "Or mobile", value: escapeHtml(account.mobile) }] : []),
           { label: "Password", value: passwordHelp },
         ]),
-        ...(signInUrl ? [button(brand, `Sign in to ${brand.name}`, signInUrl)] : []),
+        ...appLinks.map((app) => button(app.brand, `Sign in to ${app.brand.name}`, app.url)),
+        ...(appLinks.length
+          ? [
+              finePrint(
+                appLinks
+                  .map((app) => {
+                    const url = escapeHtml(app.url);
+                    return `${app.brand.name}: <a href="${url}" style="color: ${app.brand.accent}">${url}</a>`;
+                  })
+                  .join("<br>"),
+              ),
+            ]
+          : []),
         finePrint(`${security}<br>${help}`),
         paragraph(`Welcome aboard,<br><strong>The ${brand.name} team</strong>`),
       ].join("\n"),

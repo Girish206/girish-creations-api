@@ -8,6 +8,7 @@ import {
   deleteExpenseGroupHandler,
   listExpenseGroupsHandler,
   listGroupExpensesHandler,
+  sendSplitEmailHandler,
   setExpenseGroupClosedHandler,
   updateExpenseGroupHandler,
 } from "./expense-group.controller";
@@ -40,6 +41,12 @@ expenseGroupAdminRouter.put(
   requireAdminAuth,
   requireExpenseAccess,
   asyncHandler(setExpenseGroupClosedHandler),
+);
+expenseGroupAdminRouter.post(
+  "/:id/split-email",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(sendSplitEmailHandler),
 );
 expenseGroupAdminRouter.post(
   "/:id/settlements",

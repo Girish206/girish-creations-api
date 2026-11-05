@@ -1,6 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import type { EmailMessage } from "../../lib/email";
-import { BRANDS, codeBlock, escapeHtml, finePrint, logoImages, paragraph, renderEmail } from "../../lib/email-layout";
+import { BRANDS, codeBlock, escapeHtml, finePrint, paragraph, renderSimpleEmail } from "../../lib/email-layout";
 import type { AuthApp } from "../../types/express";
 
 // One-time codes emailed for signing in, or for setting a new password.
@@ -64,7 +64,6 @@ export function buildCodeEmail(
     fromName: brand.name,
     to: [to],
     subject: title,
-    inlineImages: logoImages(brand),
     clientReference: `auth-${purpose}`,
     textBody: [
       greeting(to.name),
@@ -80,8 +79,7 @@ export function buildCodeEmail(
       "",
       `- ${brand.name}`,
     ].join("\n"),
-    htmlBody: renderEmail({
-      brand,
+    htmlBody: renderSimpleEmail({
       title,
       // Inboxes show this line on lock screens, so it stays free of the code.
       preheader: `${intro} ${expiry}`,
@@ -118,11 +116,9 @@ export function buildPasswordChangedEmail(
     fromName: brand.name,
     to: [to],
     subject: `Your ${brand.name} password was changed`,
-    inlineImages: logoImages(brand),
     clientReference: "auth-password-changed",
     textBody: [greeting(to.name), "", notice, "", shared, "", warning, "", `- ${brand.name}`].join("\n"),
-    htmlBody: renderEmail({
-      brand,
+    htmlBody: renderSimpleEmail({
       title,
       preheader: `Your ${brand.name} password was changed on ${when} IST.`,
       body: [

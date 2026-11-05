@@ -31,11 +31,59 @@ export interface MemberBalance {
   pendingCents: number;
 }
 
-// The most one person can repay another in a group: what the payer still owes,
-// up to what the other is still owed. More would flip who owes whom.
+export interface SuggestedTransfer {
+  fromAdminUserId: bigint;
+  fromName: string;
+  toAdminUserId: bigint;
+  toName: string;
+  amountCents: number;
+}
+
+// Who pays whom: the first person owing clears the first person owed, and what's
+// left of either moves on to the next. The order comes from the expenses alone,
+// not from what's still pending, so a part payment only lowers its own row and
+// nobody is moved on to paying someone else. Only changing an expense can change
+// the pairs. The settle-up screen does the same (groupSettlement.ts on the client).
+export function suggestTransfers(balances: MemberBalance[]): SuggestedTransfer[] {
+  const fromExpenses = (balance: MemberBalance) => balance.paidCents - balance.shareCents;
+  const byId = (a: MemberBalance, b: MemberBalance) =>
+    a.adminUserId < b.adminUserId ? -1 : a.adminUserId > b.adminUserId ? 1 : 0;
+  const creditors = balances
+    .filter((balance) => balance.pendingCents > 0)
+    .sort((a, b) => fromExpenses(b) - fromExpenses(a) || byId(a, b))
+    .map((balance) => ({ ...balance, left: balance.pendingCents }));
+  const debtors = balances
+    .filter((balance) => balance.pendingCents < 0)
+    .sort((a, b) => fromExpenses(a) - fromExpenses(b) || byId(a, b))
+    .map((balance) => ({ ...balance, left: -balance.pendingCents }));
+
+  const transfers: SuggestedTransfer[] = [];
+  let c = 0;
+  let d = 0;
+  while (c < creditors.length && d < debtors.length) {
+    const amountCents = Math.min(creditors[c].left, debtors[d].left);
+    transfers.push({
+      fromAdminUserId: debtors[d].adminUserId,
+      fromName: debtors[d].name,
+      toAdminUserId: creditors[c].adminUserId,
+      toName: creditors[c].name,
+      amountCents,
+    });
+    creditors[c].left -= amountCents;
+    debtors[d].left -= amountCents;
+    if (creditors[c].left === 0) c++;
+    if (debtors[d].left === 0) d++;
+  }
+  return transfers;
+}
+
+// The most one person can repay another in a group: what's left on their row.
+// Anything else would change who the others pay.
 export function maxRepaymentCents(balances: MemberBalance[], fromId: bigint, toId: bigint) {
-  const pendingOf = (id: bigint) => balances.find((balance) => balance.adminUserId === id)?.pendingCents ?? 0;
-  return Math.max(0, Math.min(-pendingOf(fromId), pendingOf(toId)));
+  const row = suggestTransfers(balances).find(
+    (transfer) => transfer.fromAdminUserId === fromId && transfer.toAdminUserId === toId,
+  );
+  return row?.amountCents ?? 0;
 }
 
 // Worked out here rather than in the browser because expenses are private:

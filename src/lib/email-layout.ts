@@ -2,7 +2,8 @@ import type { InlineImage } from "./email";
 import { GIRISH_CREATIONS_LOGO, RUNMITRA_LOGO } from "./email-logos";
 import type { AuthApp } from "../types/express";
 
-// The one layout behind every email, dressed in the brand of the app it's from.
+// The layouts behind every email: renderEmail for the welcome email, dressed in
+// the brand of the app it's from, and renderSimpleEmail for everything else.
 // Email clients are far behind browsers: Outlook ignores gradients and most CSS,
 // so it's tables and inline styles, with a solid colour under every gradient.
 // The name beside the logo is text, so the brand still shows if images are blocked.
@@ -51,7 +52,7 @@ export const BRANDS: Record<AuthApp, EmailBrand> = {
 
 const LOGO_CID = "brand-logo";
 
-// Every email built with renderEmail has to carry this, or its logo won't show.
+// An email built with renderEmail has to carry this, or its logo won't show.
 export const logoImages = (brand: EmailBrand): InlineImage[] => [
   { cid: LOGO_CID, mimeType: "image/png", content: brand.logo },
 ];
@@ -72,14 +73,10 @@ export const paragraph = (html: string) =>
   `<p style="margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: #374151">${html}</p>`;
 
 export function codeBlock(brand: EmailBrand, code: string, caption: string) {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 4px 0 20px">
-  <tr>
-    <td align="center" bgcolor="${brand.codeBackground}" style="padding: 20px 12px; background: ${brand.codeBackground}; border: 1px solid ${brand.codeBorder}; border-radius: 12px">
-      <div style="font-family: 'SF Mono', Menlo, Consolas, 'Courier New', monospace; font-size: 34px; font-weight: 700; letter-spacing: 8px; color: ${brand.accent}">${escapeHtml(code)}</div>
-      <div style="margin-top: 8px; font-size: 13px; color: #6b7280">${caption}</div>
-    </td>
-  </tr>
-</table>`;
+  return `<p style="margin: 0 0 16px">
+  <span style="font-family: 'SF Mono', Menlo, Consolas, 'Courier New', monospace; font-size: 26px; font-weight: 700; letter-spacing: 4px; color: ${brand.accent}">${escapeHtml(code)}</span><br>
+  <span style="font-size: 13px; color: #6b7280">${caption}</span>
+</p>`;
 }
 
 export function button(brand: EmailBrand, label: string, href: string) {
@@ -92,14 +89,13 @@ export function button(brand: EmailBrand, label: string, href: string) {
 </table>`;
 }
 
+export const textLink = (brand: EmailBrand, label: string, href: string) =>
+  `<a href="${escapeHtml(href)}" style="color: ${brand.accent}">${escapeHtml(label)}</a>`;
+
 // Someone's own words, set apart from what we're saying.
-export function quote(brand: EmailBrand, text: string) {
+export function quote(text: string) {
   const html = escapeHtml(text).replace(/\r?\n/g, "<br>");
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 4px 0 20px">
-  <tr>
-    <td bgcolor="#f9fafb" style="padding: 14px 16px; background: #f9fafb; border-left: 4px solid ${brand.accent}; border-radius: 4px; font-size: 15px; line-height: 1.6; color: #111827; word-break: break-word">${html}</td>
-  </tr>
-</table>`;
+  return `<p style="margin: 0 0 16px; padding-left: 12px; border-left: 3px solid #d1d5db; font-size: 15px; line-height: 1.6; color: #111827; word-break: break-word">${html}</p>`;
 }
 
 export const sectionHeading = (html: string) =>
@@ -141,9 +137,84 @@ export function detailsPanel(brand: EmailBrand, rows: { label: string; value: st
 </table>`;
 }
 
+// Labelled details with nothing around them.
+export function detailRows(rows: { label: string; value: string }[]) {
+  const cells = rows
+    .map(
+      (row) => `<tr>
+    <td width="110" valign="top" style="padding: 2px 0; font-size: 14px; line-height: 1.5; color: #6b7280">${row.label}</td>
+    <td style="padding: 2px 0; font-size: 14px; line-height: 1.5; color: #111827; word-break: break-word">${row.value}</td>
+  </tr>`,
+    )
+    .join("\n");
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 0 0 16px">
+  ${cells}
+</table>`;
+}
+
+// Ready-made cells under a row of headings, with thin rules between the rows.
+export function dataTable(headings: string[], rows: { cells: string[]; emphasise?: boolean }[]) {
+  const edge = "border-bottom: 1px solid #e5e7eb";
+  const head = headings
+    .map(
+      (heading) =>
+        `<th align="left" style="padding: 6px 8px 6px 0; ${edge}; font-size: 13px; font-weight: 600; color: #6b7280">${heading}</th>`,
+    )
+    .join("");
+  const body = rows
+    .map((row) => {
+      const weight = row.emphasise ? "font-weight: 600; " : "";
+      const cells = row.cells
+        .map((cell) => `<td valign="top" style="padding: 6px 8px 6px 0; ${edge}; ${weight}font-size: 14px; line-height: 1.4; color: #111827">${cell}</td>`)
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("\n");
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="margin: 0 0 16px; border-collapse: collapse">
+<thead><tr>${head}</tr></thead>
+<tbody>${body}</tbody>
+</table>`;
+}
+
 export const finePrint = (html: string) =>
   `<p style="margin: 0 0 16px; font-size: 13px; line-height: 1.5; color: #6b7280">${html}</p>`;
 
+export interface SimpleEmailLayout {
+  title: string;
+  // The grey line inboxes show beside the subject.
+  preheader: string;
+  body: string;
+  // Why they got it, under the message.
+  footer: string;
+}
+
+// Every email but the welcome: a plain message, with no logo, header or card.
+export function renderSimpleEmail({ title, preheader, body, footer }: SimpleEmailLayout) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>${escapeHtml(title)}</title>
+</head>
+<body style="margin: 0; padding: 0; background: #ffffff; font-family: ${FONT}">
+<div style="display: none; max-height: 0; overflow: hidden; opacity: 0">${escapeHtml(preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 560px">
+  <tr>
+    <td style="padding: 12px 16px">
+      <h1 style="margin: 0 0 12px; font-size: 18px; line-height: 1.3; font-weight: 600; color: #111827">${escapeHtml(title)}</h1>
+      ${body}
+      <p style="margin: 16px 0 0; padding-top: 10px; border-top: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; color: #6b7280">${footer}</p>
+    </td>
+  </tr>
+</table>
+</body>
+</html>`;
+}
+
+// The welcome email's layout, with the app's logo and header.
 export interface EmailLayout {
   brand: EmailBrand;
   title: string;

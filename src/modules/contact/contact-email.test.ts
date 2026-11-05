@@ -40,7 +40,14 @@ test("the message keeps its line breaks", () => {
   assert.ok(email.htmlBody?.includes("Line one<br>Line two"));
 });
 
-test("it's from Girish Creations, and the reply button addresses the visitor", () => {
+test("it's plain, with no logo or card", () => {
+  const email = buildContactEmail(contact, owner);
+  assert.equal(email.inlineImages, undefined);
+  assert.ok(!email.htmlBody?.includes("cid:"));
+  assert.ok(!email.htmlBody?.includes("gradient"));
+});
+
+test("it's from Girish Creations, and the reply link addresses the visitor", () => {
   const email = buildContactEmail(contact, owner);
   assert.equal(email.fromName, "Girish Creations");
   assert.ok(email.htmlBody?.includes('href="mailto:visitor@example.com?subject=Re%3A%20Hello"'));

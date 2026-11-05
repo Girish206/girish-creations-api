@@ -292,6 +292,8 @@ model ExpenseGroup {
   // can't take new expenses (or edits to its existing ones) until reopened.
   closedAt  DateTime? @map("closed_at")
   createdAt DateTime  @default(now()) @map("created_at")
+  // Last time someone emailed the group its split-up from the settle-up screen.
+  splitEmailSentAt DateTime? @map("split_email_sent_at")
 
   expenses    Expense[]
   settlements ExpenseGroupSettlement[]

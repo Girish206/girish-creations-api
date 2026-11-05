@@ -6,7 +6,7 @@ import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, ForbiddenError, HttpError, NotFoundError } from "../../utils/httpError";
 import { maskEmail } from "../auth/auth-code";
 import { connectedPeopleIds } from "./connected-people";
-import { buildWelcomeEmail, welcomeAppFor } from "./welcome-email";
+import { buildWelcomeEmail } from "./welcome-email";
 
 const rawSelectFields = {
   id: true,
@@ -476,9 +476,7 @@ export async function sendWelcomeEmail(id: bigint, actor: ActingAdmin) {
   }
 
   try {
-    await sendEmail(
-      buildWelcomeEmail({ ...account, email: account.email! }, env.signInUrls[welcomeAppFor(account)]),
-    );
+    await sendEmail(buildWelcomeEmail({ ...account, email: account.email! }, env.signInUrls));
   } catch (error) {
     const reason = error instanceof EmailError ? `${error.code}: ${error.message}` : error;
     console.error("Couldn't send a welcome email:", reason);

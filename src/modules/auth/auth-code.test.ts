@@ -56,18 +56,18 @@ test("each app's email looks and reads like that app", () => {
   assert.ok(!runmitra.htmlBody?.includes("Girish"));
 });
 
-test("every email carries the logo its HTML refers to, for its own app", () => {
+test("these emails are plain: no logo, header or card", () => {
   const emails = [
     buildCodeEmail({ address: "a@b.com" }, "123456", "login", "cricket"),
     buildCodeEmail({ address: "a@b.com" }, "123456", "reset", "admin"),
     buildPasswordChangedEmail({ address: "a@b.com" }, "admin"),
   ];
   for (const email of emails) {
-    const cid = /src="cid:([^"]+)"/.exec(email.htmlBody ?? "")?.[1];
-    assert.equal(email.inlineImages?.[0].cid, cid);
-    assert.equal(email.inlineImages?.[0].mimeType, "image/png");
+    assert.equal(email.inlineImages, undefined);
+    assert.ok(!email.htmlBody?.includes("cid:"));
+    assert.ok(!email.htmlBody?.includes("gradient"));
+    assert.ok(!email.htmlBody?.includes("border-radius"));
   }
-  assert.notEqual(emails[0].inlineImages?.[0].content, emails[1].inlineImages?.[0].content);
 });
 
 test("the code stays out of the preview line inboxes show", () => {

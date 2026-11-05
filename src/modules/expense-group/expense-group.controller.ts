@@ -71,6 +71,11 @@ export async function deleteSettlementHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
+export async function sendSplitEmailHandler(req: Request, res: Response) {
+  const result = await expenseGroupService.sendSplitEmail(parseId(req.params.id), requestingAdmin(req));
+  res.json({ data: result });
+}
+
 export async function listGroupExpensesHandler(req: Request, res: Response) {
   const items = await listGroupExpenses(parseId(req.params.id), requestingAdmin(req));
   res.json({ data: items });

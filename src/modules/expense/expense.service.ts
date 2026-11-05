@@ -2,7 +2,7 @@ import { prisma } from "../../lib/prisma";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../../utils/httpError";
 import { assertAdminUsersExist } from "../admin-user/assert-admin-users-exist";
 import { assertCanPick } from "../admin-user/connected-people";
-import { addMissingMembers, assertGroupAccess } from "../expense-group/expense-group.service";
+import { addMissingMembers, assertGroupAccess, mayRecordRepayment } from "../expense-group/expense-group.service";
 import { computeDirectTransfers } from "./direct-balances";
 import { computeEqualShares, normalizeSplit, resolveCustomShares, type SplitShare } from "./split";
 import { assertGoalAccess } from "../savings-goal/savings-goal.service";
@@ -381,8 +381,8 @@ export async function addDirectSettlement(input: DirectSettlementInput, admin: R
   if (input.fromAdminUserId === input.toAdminUserId) {
     throw BadRequestError("A settlement needs two different people");
   }
-  if (!admin.isSuperAdmin && !isParty(admin, input.fromAdminUserId, input.toAdminUserId)) {
-    throw ForbiddenError("You can only record repayments you're part of");
+  if (!mayRecordRepayment(input.toAdminUserId, admin)) {
+    throw ForbiddenError("Only the person receiving this money can mark it as paid");
   }
   await assertAdminUsersExist([input.fromAdminUserId, input.toAdminUserId]);
   // Worked out from the payer's side: that covers everything between the two.
@@ -414,8 +414,8 @@ export async function deleteDirectSettlement(id: bigint, admin: RequestingAdmin)
   if (!existing || existing.expenseGroupId) {
     throw NotFoundError("Settlement not found");
   }
-  if (!admin.isSuperAdmin && !isParty(admin, existing.fromAdminUserId, existing.toAdminUserId)) {
-    throw ForbiddenError("You can only remove repayments you're part of");
+  if (!mayRecordRepayment(existing.toAdminUserId, admin)) {
+    throw ForbiddenError("Only the person who received this money can remove it");
   }
   await prisma.expenseGroupSettlement.delete({ where: { id } });
 }

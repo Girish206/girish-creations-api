@@ -1,5 +1,5 @@
 import type { EmailMessage } from "../../lib/email";
-import { BRANDS, button, escapeHtml, finePrint, logoImages, paragraph, quote, renderEmail } from "../../lib/email-layout";
+import { BRANDS, escapeHtml, finePrint, paragraph, quote, renderSimpleEmail, textLink } from "../../lib/email-layout";
 
 export interface ContactEmailInput {
   id: bigint;
@@ -22,7 +22,6 @@ export function buildContactEmail(contact: ContactEmailInput, owner: { address: 
     to: [owner],
     replyTo: { address: contact.email, name: contact.name },
     subject: `New portfolio message: ${subject}`,
-    inlineImages: logoImages(brand),
     clientReference: `contact-${contact.id}`,
     textBody: [
       `Hi ${firstName},`,
@@ -37,8 +36,7 @@ export function buildContactEmail(contact: ContactEmailInput, owner: { address: 
       "",
       "- Girish Creations",
     ].join("\n"),
-    htmlBody: renderEmail({
-      brand,
+    htmlBody: renderSimpleEmail({
       title: "You have a new message",
       preheader: `${contact.name}: ${subject}`,
       body: [
@@ -47,8 +45,8 @@ export function buildContactEmail(contact: ContactEmailInput, owner: { address: 
           `<strong>${escapeHtml(contact.name)}</strong> (${escapeHtml(contact.email)}) sent a message through your portfolio.`,
         ),
         paragraph(`<strong>Subject:</strong> ${escapeHtml(subject)}`),
-        quote(brand, contact.message),
-        button(brand, `Reply to ${contact.name}`, replyLink),
+        quote(contact.message),
+        paragraph(textLink(brand, `Reply to ${contact.name}`, replyLink)),
         finePrint("You can also just reply to this email. The message is saved in your admin panel too."),
       ].join("\n"),
       footer: "You're getting this because someone used the contact form on your portfolio.",

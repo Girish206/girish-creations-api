@@ -1,9 +1,13 @@
 import type { Prisma } from "@prisma/client";
+import { env } from "../../config/env";
+import { EmailError, isEmailEnabled, sendEmail } from "../../lib/email";
 import { prisma } from "../../lib/prisma";
-import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../../utils/httpError";
+import { BadRequestError, ConflictError, ForbiddenError, HttpError, NotFoundError } from "../../utils/httpError";
+import { maskEmail } from "../auth/auth-code";
 import { assertAdminUsersExist } from "../admin-user/assert-admin-users-exist";
 import { assertCanPick } from "../admin-user/connected-people";
-import { maxRepaymentCents, summarizeGroup } from "./group-balances";
+import { maxRepaymentCents, suggestTransfers, summarizeGroup } from "./group-balances";
+import { buildSplitEmail, splitEmailAudience } from "./group-split-email";
 
 const userSelect = { select: { id: true, email: true, name: true } } as const;
 
@@ -272,6 +276,69 @@ export async function deleteExpenseGroup(id: bigint, admin: RequestingAdmin) {
   await prisma.expenseGroup.delete({ where: { id } });
 }
 
+// Stops a double click, or someone repeatedly mailing the whole group.
+const SPLIT_EMAIL_COOLDOWN_SECONDS = 60;
+
+export function splitEmailBlocker(
+  group: { expenseCount: number; splitEmailSentAt: Date | null },
+  now = Date.now(),
+) {
+  if (group.expenseCount === 0) return "This group has no expenses yet, so there's no split-up to send.";
+  const waitSeconds = group.splitEmailSentAt
+    ? Math.ceil(SPLIT_EMAIL_COOLDOWN_SECONDS - (now - group.splitEmailSentAt.getTime()) / 1000)
+    : 0;
+  if (waitSeconds > 0) return `The split-up was just sent. You can send another in ${waitSeconds} seconds.`;
+  return null;
+}
+
+// Emails everyone in the group the split-up, when someone settling up chooses
+// to. Each email is separate, so no one sees anyone else's address.
+export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
+  await findGroupOrThrow(id, admin);
+  const group = await prisma.expenseGroup.findUniqueOrThrow({ where: { id }, include: includeRelations });
+  const summary = summarizeGroup(group.expenses, group.settlements);
+  const blocker = splitEmailBlocker({ expenseCount: summary.expenseCount, splitEmailSentAt: group.splitEmailSentAt });
+  if (blocker) throw BadRequestError(blocker);
+  if (!isEmailEnabled()) {
+    throw new HttpError(503, "Email isn't set up on the server yet, so this can't be sent.", "EMAIL_OFF");
+  }
+
+  // Everyone on the group: an older one has no members recorded, only balances.
+  const peopleIds = unique([
+    ...group.members.map((member) => member.adminUserId),
+    ...summary.balances.map((balance) => balance.adminUserId),
+  ]);
+  const [people, sender] = await Promise.all([
+    prisma.adminUser.findMany({
+      where: { id: { in: peopleIds } },
+      select: { id: true, email: true, name: true, isActive: true, passwordHash: true, hasExpensesAccess: true },
+    }),
+    prisma.adminUser.findUniqueOrThrow({ where: { id: admin.id }, select: { email: true, name: true } }),
+  ]);
+  const { recipients, noEmail } = splitEmailAudience(people);
+  if (recipients.length === 0) {
+    throw BadRequestError("No one in this group has an email address.");
+  }
+
+  const sentBy = sender.name?.trim() || (sender.email ? maskEmail(sender.email) : "Someone");
+  const emailGroup = { id, name: group.name, ...summary, transfers: suggestTransfers(summary.balances) };
+  const results = await Promise.allSettled(
+    recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.signInUrls.admin))),
+  );
+  const failed = results.flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));
+  for (const error of failed) {
+    const reason = error instanceof EmailError ? `${error.code}: ${error.message}` : error;
+    console.error(`Couldn't email the split-up for group ${id}:`, reason);
+  }
+  const sent = recipients.length - failed.length;
+  if (sent === 0) {
+    throw new HttpError(502, "We couldn't send the email just now. Please try again shortly.", "EMAIL_FAILED");
+  }
+
+  await prisma.expenseGroup.update({ where: { id }, data: { splitEmailSentAt: new Date() } });
+  return { sent, failed: failed.length, noEmail };
+}
+
 export interface SettlementInput {
   amount: string;
   date: string;
@@ -279,9 +346,10 @@ export interface SettlementInput {
   toAdminUserId: bigint;
 }
 
-// A repayment is between two people, the same rule as for daily splits.
-export function mayRecordRepayment(fromId: bigint, toId: bigint, admin: RequestingAdmin) {
-  return admin.isSuperAdmin || fromId === admin.id || toId === admin.id;
+// Whoever gets the money says it arrived, so someone can't clear their own debt.
+// Super admins can do it for anyone. The same rule goes for daily splits.
+export function mayRecordRepayment(toId: bigint, admin: RequestingAdmin) {
+  return admin.isSuperAdmin || toId === admin.id;
 }
 
 export async function addSettlement(groupId: bigint, input: SettlementInput, admin: RequestingAdmin) {
@@ -292,8 +360,8 @@ export async function addSettlement(groupId: bigint, input: SettlementInput, adm
   if (input.fromAdminUserId === input.toAdminUserId) {
     throw BadRequestError("A settlement needs two different people");
   }
-  if (!mayRecordRepayment(input.fromAdminUserId, input.toAdminUserId, admin)) {
-    throw ForbiddenError("You can only record repayments you're part of");
+  if (!mayRecordRepayment(input.toAdminUserId, admin)) {
+    throw ForbiddenError("Only the person receiving this money can mark it as paid");
   }
   await assertAdminUsersExist([input.fromAdminUserId, input.toAdminUserId]);
   const loaded = await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations });
@@ -323,8 +391,8 @@ export async function deleteSettlement(groupId: bigint, settlementId: bigint, ad
   if (!existing || existing.expenseGroupId !== groupId) {
     throw NotFoundError("Settlement not found");
   }
-  if (!mayRecordRepayment(existing.fromAdminUserId, existing.toAdminUserId, admin)) {
-    throw ForbiddenError("You can only remove repayments you're part of");
+  if (!mayRecordRepayment(existing.toAdminUserId, admin)) {
+    throw ForbiddenError("Only the person who received this money can remove it");
   }
   if (group.closedAt) {
     throw BadRequestError("This group is closed — reopen it to change settlements");
