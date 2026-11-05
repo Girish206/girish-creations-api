@@ -51,11 +51,16 @@ const bulkPlayersSchema = z.object({
 
 const loginSchema = z.object({ password: z.string().min(8).optional() });
 
+// Lowercase, since signing in looks it up that way.
+const accountEmail = z.string().trim().toLowerCase().email("Enter a valid email address").max(254);
+
 // The name can be left out when an organiser already added this mobile
 // (setting a password for a team-added player): the player's name is used.
 const signUpSchema = z.object({
   name: playerName.pipe(z.string().min(2).max(100)).optional(),
   mobile: mobileSchema,
+  // Optional: where sign-in and password-reset codes go.
+  email: accountEmail.optional(),
   password: z.string().min(8).max(100),
   inviteCode: z.string().trim().max(12).optional(),
 });
@@ -64,6 +69,7 @@ const profileSchema = z
   .object({
     name: playerName.pipe(z.string().min(2).max(100)),
     mobile: mobileSchema,
+    email: accountEmail.optional(),
     role: z.enum(["batter", "bowler", "all-rounder", "wicket-keeper"]).nullish(),
     currentPassword: z.string().optional(),
     newPassword: z.string().min(8).max(100).optional(),

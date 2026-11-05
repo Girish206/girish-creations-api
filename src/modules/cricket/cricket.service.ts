@@ -31,6 +31,21 @@ const canSignIntoCricket = (account: {
   isOwner: boolean;
 }) => account.isActive && account.passwordHash !== null && (account.hasCricketAccess || account.isSuperAdmin || account.isOwner);
 
+// Whether RunMitra is all this account is used for. Having an email doesn't
+// say otherwise: players can give one when they sign up.
+export const isCricketOnly = (account: {
+  isOwner: boolean;
+  isSuperAdmin: boolean;
+  hasPortfolioAccess: boolean;
+  hasExpensesAccess: boolean;
+  hasSavingsAccess: boolean;
+}) =>
+  !account.isOwner &&
+  !account.isSuperAdmin &&
+  !account.hasPortfolioAccess &&
+  !account.hasExpensesAccess &&
+  !account.hasSavingsAccess;
+
 // Super admins get mobiles and whether each player can sign in; players
 // only see names and roles (no one else's number).
 export async function listPlayers(full: boolean) {
@@ -193,21 +208,14 @@ export async function grantPlayerLogin(id: bigint, password: string | undefined,
 
 // Turns cricket access off. An account that only existed for cricket is
 // removed (left without a password it would show up as a Money Hub guest);
-// if anything points at it, it's deactivated instead.
+// if anything points at it, it's deactivated instead. One with an email just
+// loses access, so giving it back doesn't lose the email they signed up with.
 export async function revokePlayerLogin(id: bigint) {
   const player = await prisma.cricketPlayer.findUnique({ where: { id } });
   if (!player) throw NotFoundError("Player not found");
   const account = await accountForMobile(player.mobile);
   if (!account) return;
-  const cricketOnly =
-    !account.listedInAdmin &&
-    !account.email &&
-    !account.isOwner &&
-    !account.isSuperAdmin &&
-    !account.hasPortfolioAccess &&
-    !account.hasExpensesAccess &&
-    !account.hasSavingsAccess;
-  if (cricketOnly) {
+  if (!account.listedInAdmin && !account.email && isCricketOnly(account)) {
     try {
       await prisma.adminUser.delete({ where: { id: account.id } });
       return;
@@ -227,6 +235,8 @@ export async function revokePlayerLogin(id: bigint) {
 export interface CricketSignUpInput {
   name?: string;
   mobile: string;
+  // Optional: where sign-in and password-reset codes go.
+  email?: string;
   password: string;
   // Needed to claim a player someone else added (see CricketPlayer.inviteCode).
   inviteCode?: string;
@@ -288,15 +298,21 @@ export async function signUp(input: CricketSignUpInput) {
   }
   const name = input.name ?? player?.name ?? existing?.name;
   if (!name) throw BadRequestError("Enter your name");
+  // An account that already has an email keeps it.
+  const email = existing?.email ? undefined : input.email;
+  if (email && (await prisma.adminUser.findUnique({ where: { email } }))) {
+    throw ConflictError("Another account already uses this email. Enter a different one, or leave it blank.");
+  }
   const passwordHash = await bcrypt.hash(input.password, 10);
   const account = existing
     ? await prisma.adminUser.update({
         where: { id: existing.id },
-        data: { name: existing.name ?? name, passwordHash, hasCricketAccess: true },
+        data: { name: existing.name ?? name, email, passwordHash, hasCricketAccess: true },
       })
     : await prisma.adminUser.create({
         data: {
           name,
+          email,
           mobile: input.mobile,
           passwordHash,
           hasCricketAccess: true,
@@ -360,14 +376,7 @@ export async function resetPlayerLogin(playerId: bigint) {
   if (!player) throw NotFoundError("Player not found");
   const account = await accountForMobile(player.mobile);
   if (account) {
-    const cricketOnly =
-      !account.email &&
-      !account.isOwner &&
-      !account.isSuperAdmin &&
-      !account.hasPortfolioAccess &&
-      !account.hasExpensesAccess &&
-      !account.hasSavingsAccess;
-    if (!cricketOnly) throw ForbiddenError("This account is also used for Girish Creations — reset its password there");
+    if (!isCricketOnly(account)) throw ForbiddenError("This account is also used for Girish Creations — reset its password there");
     await prisma.adminUser.update({
       where: { id: account.id },
       data: { passwordHash: null, sessionVersion: { increment: 1 } },
@@ -381,6 +390,8 @@ export async function resetPlayerLogin(playerId: bigint) {
 export interface CricketProfileInput {
   name: string;
   mobile: string;
+  // Left out to keep the one they have. Changing it needs currentPassword.
+  email?: string;
   role?: string | null;
   // Both needed to change the password.
   currentPassword?: string;
@@ -400,18 +411,25 @@ export async function updateMyProfile(adminId: bigint, input: CricketProfileInpu
     await assertPlayerMobileFree(input.mobile, player?.id);
   }
 
-  let passwordHash: string | undefined;
-  if (input.newPassword) {
+  // Password-reset codes go to the email, so changing it is as sensitive as
+  // changing the password: a borrowed phone mustn't be enough for either.
+  const changesEmail = input.email !== undefined && input.email !== account.email;
+  if (input.newPassword || changesEmail) {
     const valid = account.passwordHash && (await bcrypt.compare(input.currentPassword ?? "", account.passwordHash));
     // 400 rather than 401, which the app treats as "signed out".
     if (!valid) throw BadRequestError("Your current password isn't right");
-    passwordHash = await bcrypt.hash(input.newPassword, 10);
   }
+  if (changesEmail && (await prisma.adminUser.findUnique({ where: { email: input.email } }))) {
+    throw ConflictError("Another account already uses this email. Enter a different one.");
+  }
+  const passwordHash = input.newPassword ? await bcrypt.hash(input.newPassword, 10) : undefined;
 
   const updated = await prisma.adminUser.update({
     where: { id: account.id },
-    data: { name: input.name, mobile: input.mobile, passwordHash },
+    data: { name: input.name, mobile: input.mobile, email: input.email, passwordHash },
   });
+  // A code already sent to the old address shouldn't still work.
+  if (changesEmail) await prisma.authCode.deleteMany({ where: { adminUserId: account.id } });
   if (player) {
     await prisma.cricketPlayer.update({
       where: { id: player.id },
@@ -839,7 +857,7 @@ async function dropPlayerEverywhere(id: bigint, into: bigint | null) {
 // A deleted player's sign-in goes with them (it's a cricket-only account).
 async function revokePlayerLoginFor(mobile: string | null) {
   const account = await accountForMobile(mobile);
-  if (account && !account.email && !account.isOwner && !account.isSuperAdmin && !account.hasPortfolioAccess && !account.hasExpensesAccess && !account.hasSavingsAccess) {
+  if (account && isCricketOnly(account)) {
     await prisma.adminUser.update({
       where: { id: account.id },
       data: { hasCricketAccess: false, isActive: false, sessionVersion: { increment: 1 } },
