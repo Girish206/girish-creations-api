@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
+import { requireAdminAuth, requireModuleAccess, requireSuperAdmin } from "../../middleware/auth";
 import { upload } from "../../middleware/upload";
 import {
   createExpenseCategoryHandler,
@@ -25,10 +25,13 @@ expenseCategoryAdminRouter.post(
   upload.single("image"),
   asyncHandler(createExpenseCategoryHandler),
 );
+// Categories are shared by everyone, so anyone can add one but only a super
+// admin can change or remove what others are using.
 expenseCategoryAdminRouter.put(
   "/:id",
   requireAdminAuth,
   requireExpenseAccess,
+  requireSuperAdmin,
   upload.single("image"),
   asyncHandler(updateExpenseCategoryHandler),
 );
@@ -36,5 +39,6 @@ expenseCategoryAdminRouter.delete(
   "/:id",
   requireAdminAuth,
   requireExpenseAccess,
+  requireSuperAdmin,
   asyncHandler(deleteExpenseCategoryHandler),
 );

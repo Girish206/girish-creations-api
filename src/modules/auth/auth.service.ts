@@ -71,7 +71,9 @@ export function signInProblem(admin: Pick<AdminUser, "isActive"> | null, identif
   return new HttpError(401, "This account can't sign in yet. Ask an administrator for access.", "NO_LOGIN");
 }
 
-export async function login(identifier: string, password: string, app: AuthApp, remember = false) {
+// The account for an email or mobile number, as long as it's allowed to sign in
+// at all. Every way of signing in goes through this.
+export async function findSignInAccount(identifier: string) {
   const mobile = identifier.includes("@") ? null : normalizeMobile(identifier);
   if (!identifier.includes("@") && !mobile) {
     throw new HttpError(400, "Enter a valid email or 10-digit mobile number.", "INVALID_IDENTIFIER");
@@ -89,7 +91,11 @@ export async function login(identifier: string, password: string, app: AuthApp, 
     }
     throw signInProblem(admin, identifier);
   }
+  return admin;
+}
 
+export async function login(identifier: string, password: string, app: AuthApp, remember = false) {
+  const admin = await findSignInAccount(identifier);
   const valid = await bcrypt.compare(password, admin.passwordHash!);
   if (!valid) {
     throw new HttpError(401, "That password isn't right.", "WRONG_PASSWORD");

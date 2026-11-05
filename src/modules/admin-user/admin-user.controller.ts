@@ -6,12 +6,13 @@ import { isSuperAdmin } from "../../middleware/auth";
 import { mobileSchema } from "../../utils/mobile";
 
 export async function listAdminUsersHandler(req: Request, res: Response) {
-  const items = await adminUserService.listAdminUsers(actingAdmin(req));
+  const scope = req.query.scope === "money-hub" || req.query.scope === "portfolio" ? req.query.scope : undefined;
+  const items = await adminUserService.listAdminUsers(actingAdmin(req), scope);
   res.json({ data: items });
 }
 
-export async function listExpenseMembersHandler(_req: Request, res: Response) {
-  const items = await adminUserService.listExpenseMembers();
+export async function listExpenseMembersHandler(req: Request, res: Response) {
+  const items = await adminUserService.listExpenseMembers(actingAdmin(req));
   res.json({ data: items });
 }
 
@@ -73,6 +74,12 @@ export async function updateAdminUserHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   const input = updateSchema.parse(req.body);
   const updated = await adminUserService.updateAdminUser(id, input, actingAdmin(req));
+  res.json({ data: updated });
+}
+
+export async function sendWelcomeEmailHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const updated = await adminUserService.sendWelcomeEmail(id, actingAdmin(req));
   res.json({ data: updated });
 }
 

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { isSuperAdmin } from "../../middleware/auth";
 import * as savingsGoalService from "./savings-goal.service";
+import { amountSchema, dateSchema } from "../../utils/money";
 import { parseId } from "../../utils/parseId";
 
 function requestingAdmin(req: Request) {
@@ -14,18 +15,19 @@ export async function listSavingsGoalsHandler(req: Request, res: Response) {
 }
 
 const goalSchema = z.object({
-  name: z.string().min(1),
-  targetAmount: z.coerce.string().nullable().optional(),
-  targetDate: z.string().nullable().optional(),
+  name: z.string().trim().min(1),
+  targetAmount: amountSchema.nullable().optional(),
+  targetDate: dateSchema.nullable().optional(),
   bankName: z.string().nullable().optional(),
   accountHolderAdminUserId: z.coerce.bigint().nullable().optional(),
-  // Who can see/use this goal — omitted/empty means everyone with access.
+  // Who else can see/use this goal — omitted/empty keeps it private to its
+  // creator and account holder.
   memberAdminUserIds: z.array(z.coerce.bigint()).optional(),
 });
 
 export async function createSavingsGoalHandler(req: Request, res: Response) {
   const input = goalSchema.parse(req.body);
-  const created = await savingsGoalService.createSavingsGoal(input, BigInt(req.admin!.sub));
+  const created = await savingsGoalService.createSavingsGoal(input, requestingAdmin(req));
   res.status(201).json({ data: created });
 }
 
@@ -52,8 +54,8 @@ export async function deleteSavingsGoalHandler(req: Request, res: Response) {
 }
 
 const contributionSchema = z.object({
-  amount: z.coerce.string().min(1),
-  date: z.string(),
+  amount: amountSchema,
+  date: dateSchema,
   contributedByAdminUserId: z.coerce.bigint().optional(),
 });
 

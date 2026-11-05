@@ -1,6 +1,9 @@
+import type { AdminUser } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
+import { prisma } from "../lib/prisma";
+import { asyncHandler } from "../utils/asyncHandler";
 import { ForbiddenError, UnauthorizedError } from "../utils/httpError";
 import type { AdminTokenPayload, AuthApp } from "../types/express";
 
@@ -27,8 +30,53 @@ function requireSession(apps: AuthApp[]) {
   };
 }
 
-// A session from the Girish Creations admin.
-export const requireAdminAuth = requireSession(["admin"]);
+type SessionAccount = Pick<
+  AdminUser,
+  | "email"
+  | "name"
+  | "isActive"
+  | "passwordHash"
+  | "sessionVersion"
+  | "isOwner"
+  | "isSuperAdmin"
+  | "hasPortfolioAccess"
+  | "hasExpensesAccess"
+  | "hasSavingsAccess"
+  | "hasCricketAccess"
+>;
+
+// The token as the account stands now, or null if the session has ended: it was
+// deactivated, lost its login, or changed password or signed out everywhere
+// since the token was issued. Access changes count from the next request.
+export function currentSession(token: AdminTokenPayload, account: SessionAccount | null): AdminTokenPayload | null {
+  if (!account?.isActive || account.passwordHash === null) return null;
+  if ((token.sv ?? 0) !== (account.sessionVersion ?? 0)) return null;
+  return {
+    ...token,
+    email: account.email,
+    name: account.name,
+    isOwner: account.isOwner,
+    isSuperAdmin: account.isOwner || account.isSuperAdmin,
+    hasPortfolioAccess: account.hasPortfolioAccess,
+    hasExpensesAccess: account.hasExpensesAccess,
+    hasSavingsAccess: account.hasSavingsAccess,
+    hasCricketAccess: account.hasCricketAccess,
+  };
+}
+
+// Only checks the token itself. Use requireAdminAuth to protect a route.
+export const requireAdminToken = requireSession(["admin"]);
+
+const requireCurrentAccount = asyncHandler(async (req, _res, next) => {
+  const account = await prisma.adminUser.findUnique({ where: { id: BigInt(req.admin!.sub) } });
+  const session = currentSession(req.admin!, account);
+  if (!session) throw UnauthorizedError("This session has ended. Sign in again.");
+  req.admin = session;
+  next();
+});
+
+// A session from the Girish Creations admin, for an account that can still use it.
+export const requireAdminAuth = [requireAdminToken, requireCurrentAccount];
 // A session from RunMitra.
 export const requireCricketAuth = requireSession(["cricket"]);
 // Either: for what both apps share (refresh, who am I, sign out).

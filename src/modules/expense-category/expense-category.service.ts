@@ -42,6 +42,13 @@ export async function deleteExpenseCategory(id: bigint) {
   if (!existing) {
     throw NotFoundError("Category not found");
   }
+  // Counted across everyone's expenses, not just the requester's visible ones.
+  const expenses = await prisma.expense.count({ where: { categoryId: id } });
+  if (expenses > 0) {
+    throw ConflictError(
+      `${expenses} expense${expenses === 1 ? " uses" : "s use"} this category — move ${expenses === 1 ? "it" : "them"} to another category first`,
+    );
+  }
   await prisma.expenseCategory.delete({ where: { id } });
   await deleteUploadedFile(existing.icon);
 }

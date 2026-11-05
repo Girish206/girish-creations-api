@@ -226,6 +226,8 @@ model AdminUser {
   // carry the version they were issued at, and CricDesk refuses older ones.
   // Null = 0 (accounts made before it existed).
   sessionVersion       Int?     @map("session_version")
+  // Last time someone sent them the welcome email from the admin side.
+  welcomeEmailSentAt   DateTime? @map("welcome_email_sent_at")
   createdAt            DateTime @default(now()) @map("created_at")
 
   portfolioProfile        UserProfile?
@@ -241,6 +243,24 @@ model AdminUser {
   settlementsReceived     ExpenseGroupSettlement[]  @relation("SettlementTo")
 
   @@map("admin_users")
+}
+
+// A one-time code emailed for signing in, or for setting a new password. At
+// most one per account and purpose. Only a keyed hash is stored, and rows are
+// deleted once used; an expired one is just replaced by the next request.
+// No relation to AdminUser, so these never count as records keeping an account.
+model AuthCode {
+  id          BigInt   @id @default(0) @map("_id")
+  adminUserId BigInt   @map("admin_user_id")
+  // "login" or "reset" (CodePurpose in auth-code.ts).
+  purpose     String
+  codeHash    String   @map("code_hash")
+  attempts    Int      @default(0)
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([adminUserId])
+  @@map("auth_codes")
 }
 
 model ExpenseCategory {
@@ -298,17 +318,18 @@ model ExpenseGroupMember {
   @@map("expense_group_members")
 }
 
-// A repayment between two members to settle a group's split balances —
-// "Ravi paid Girish back ₹1,200 for the Goa trip". Balances are derived
-// (paid − share ± settlements), so these are the only stored part.
+// A repayment between two members to settle split balances — "Ravi paid
+// Girish back ₹1,200 for the Goa trip". Balances are derived (paid − share ±
+// settlements), so these are the only stored part. No group = it settles
+// splits among ungrouped (daily) expenses, which balance pair by pair.
 model ExpenseGroupSettlement {
   id        BigInt   @id @default(0) @map("_id")
   amount    String
   date      DateTime
   createdAt DateTime @default(now()) @map("created_at")
 
-  expenseGroupId BigInt       @map("expense_group_id")
-  expenseGroup   ExpenseGroup @relation(fields: [expenseGroupId], references: [id], onDelete: Cascade)
+  expenseGroupId BigInt?       @map("expense_group_id")
+  expenseGroup   ExpenseGroup? @relation(fields: [expenseGroupId], references: [id], onDelete: Cascade)
 
   fromAdminUserId BigInt    @map("from_admin_user_id")
   fromAdminUser   AdminUser @relation("SettlementFrom", fields: [fromAdminUserId], references: [id])

@@ -6,10 +6,10 @@ import { parseId } from "../../utils/parseId";
 import { parsePagination, paginationSkipTake, buildPaginatedResponse } from "../../utils/pagination";
 
 const contactSchema = z.object({
-  name: z.string().min(1),
-  email: z.string().email(),
-  subject: z.string().min(1),
-  message: z.string().min(1),
+  name: z.string().trim().min(1).max(200),
+  email: z.string().trim().email().max(320),
+  subject: z.string().trim().min(1).max(300),
+  message: z.string().trim().min(1).max(10_000),
 });
 
 export async function createContactHandler(req: Request, res: Response) {

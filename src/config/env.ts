@@ -19,4 +19,9 @@ export const env = {
   adminSeedEmail: process.env.ADMIN_SEED_EMAIL,
   adminSeedPassword: process.env.ADMIN_SEED_PASSWORD,
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+  // The welcome email's button. Without one, it just leaves the button out.
+  signInUrls: {
+    admin: process.env.ADMIN_SIGN_IN_URL?.trim() || undefined,
+    cricket: process.env.RUNMITRA_SIGN_IN_URL?.trim() || undefined,
+  },
 };

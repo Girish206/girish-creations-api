@@ -6,6 +6,7 @@ import {
   deleteAdminUserHandler,
   listAdminUsersHandler,
   listExpenseMembersHandler,
+  sendWelcomeEmailHandler,
   updateAdminUserHandler,
 } from "./admin-user.controller";
 
@@ -16,10 +17,16 @@ adminUserAdminRouter.get("/", requireAdminAuth, requireAccountManager, asyncHand
 adminUserAdminRouter.post("/", requireAdminAuth, requireAccountManager, asyncHandler(createAdminUserHandler));
 adminUserAdminRouter.put("/:id", requireAdminAuth, requireAccountManager, asyncHandler(updateAdminUserHandler));
 adminUserAdminRouter.delete("/:id", requireAdminAuth, requireAccountManager, asyncHandler(deleteAdminUserHandler));
+adminUserAdminRouter.post(
+  "/:id/welcome-email",
+  requireAdminAuth,
+  requireAccountManager,
+  asyncHandler(sendWelcomeEmailHandler),
+);
 
 // Any expense-module member (not super-admin-only): a minimal id/email/name list
 // used to populate "who" pickers (savings account holder, expense split
-// participants) without exposing full account-management data.
+// participants), limited to the people each person is connected to.
 export const expenseMembersAdminRouter = Router();
 expenseMembersAdminRouter.get(
   "/",

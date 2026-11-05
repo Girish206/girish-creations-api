@@ -7,6 +7,7 @@ import {
   deleteSettlementHandler,
   deleteExpenseGroupHandler,
   listExpenseGroupsHandler,
+  listGroupExpensesHandler,
   setExpenseGroupClosedHandler,
   updateExpenseGroupHandler,
 } from "./expense-group.controller";
@@ -15,6 +16,12 @@ const requireExpenseAccess = requireModuleAccess("expenses");
 
 export const expenseGroupAdminRouter = Router();
 expenseGroupAdminRouter.get("/", requireAdminAuth, requireExpenseAccess, asyncHandler(listExpenseGroupsHandler));
+expenseGroupAdminRouter.get(
+  "/:id/expenses",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(listGroupExpensesHandler),
+);
 expenseGroupAdminRouter.post("/", requireAdminAuth, requireExpenseAccess, asyncHandler(createExpenseGroupHandler));
 expenseGroupAdminRouter.put(
   "/:id",
