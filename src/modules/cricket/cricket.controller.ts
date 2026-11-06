@@ -190,6 +190,15 @@ export async function setMyPhotoHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.setMyPhoto(viewerOf(req).adminId, files.photo?.[0], removePhoto === "true") });
 }
 
+// My Profile → Delete my account, confirmed with their password; keepName
+// when they ticked "Keep my name on past matches". The app signs out after it.
+export async function deleteMyAccountHandler(req: Request, res: Response) {
+  const { password, keepName } = z
+    .object({ password: z.string().min(1).max(100), keepName: z.boolean().optional() })
+    .parse(req.body);
+  res.json({ data: await cricketService.deleteMyAccount(viewerOf(req).adminId, password, { keepName }) });
+}
+
 export async function meHandler(req: Request, res: Response) {
   res.json({ data: await cricketService.getMe(viewerOf(req).adminId) });
 }

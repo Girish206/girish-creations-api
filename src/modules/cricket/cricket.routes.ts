@@ -42,6 +42,7 @@ import {
   signInLookupHandler,
   signUpHandler,
   updateMyProfileHandler,
+  deleteMyAccountHandler,
   listPlayersHandler,
   listTournamentsHandler,
   movePlayerHandler,
@@ -211,6 +212,12 @@ cricketAdminRouter.delete(
   }),
 );
 cricketAdminRouter.put("/me/profile", asyncHandler(updateMyProfileHandler));
+// Deleting their own account: password-checked, so limited per account.
+cricketAdminRouter.post(
+  "/me/delete",
+  asyncHandler(rateLimit("delete-account", 10, 60 * 60_000, (req) => req.admin!.sub)),
+  asyncHandler(deleteMyAccountHandler),
+);
 cricketAdminRouter.get("/me/qr", asyncHandler(myQrHandler));
 cricketAdminRouter.put("/me/photo", upload.fields([{ name: "photo", maxCount: 1 }]), asyncHandler(setMyPhotoHandler));
 cricketAdminRouter.get("/players", asyncHandler(listPlayersHandler));

@@ -22,6 +22,6 @@ export const env = {
   // The links in emails to each app.
   signInUrls: {
     admin: process.env.ADMIN_SIGN_IN_URL?.trim() || "https://girish-creations.vercel.app/admin",
-    cricket: process.env.RUNMITRA_SIGN_IN_URL?.trim() || "https://runmitra.in",
+    cricket: process.env.RUNMITRA_SIGN_IN_URL?.trim() || "https://app.runmitra.in",
   },
 };

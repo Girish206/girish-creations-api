@@ -446,6 +446,115 @@ export async function setMyPhoto(adminId: bigint, photo: Express.Multer.File | u
   return setPlayerPhoto(player.id, photo, remove);
 }
 
+// ===== Deleting your own account (My Profile → Delete my account) =====
+
+// What scorecards, standings and leaderboards call a player who deleted
+// their account.
+export const DELETED_PLAYER_NAME = "Deleted player";
+
+// The signed-in user deletes their RunMitra account, confirmed with their
+// password (what the website's /delete-account page and privacy policy
+// promise). Their player record stays, since old scorecards and standings
+// point at it, but loses its mobile, photo, role and styles, and becomes
+// "Deleted player" unless they chose `keepName` (ticked in the app: their
+// consent is what lets the name stay). Their follows (both ways),
+// notification subscriptions, sign-in codes and scoring seats go; they're
+// dropped from scorer and organiser lists and saved teams; and their own
+// contact details come off the tournaments they made (the name too, unless
+// kept). An account only RunMitra used is removed (blanked and switched off
+// if something still points at it); one that's also used for the other
+// tools only loses RunMitra. Every session ends either way. Organisers
+// (super admins) and the owner can't: they run the service.
+export async function deleteMyAccount(
+  adminId: bigint,
+  password: string,
+  { keepName = false }: { keepName?: boolean } = {},
+): Promise<{ accountKept: boolean }> {
+  const account = await prisma.adminUser.findUnique({ where: { id: adminId } });
+  if (!account) throw NotFoundError("Account not found");
+  if (account.isOwner || account.isSuperAdmin) {
+    throw ForbiddenError("Organiser accounts can't be deleted here. Ask the owner to remove your organiser access first.");
+  }
+  const valid = account.passwordHash && (await bcrypt.compare(password, account.passwordHash));
+  // 400 rather than 401, which the app treats as "signed out".
+  if (!valid) throw BadRequestError("Your password isn't right");
+
+  const player = await findMyPlayer(adminId);
+  if (player) {
+    await prisma.cricketPlayer.update({
+      where: { id: player.id },
+      data: {
+        ...(keepName ? {} : { name: DELETED_PLAYER_NAME }),
+        mobile: null,
+        photoUrl: null,
+        role: null,
+        battingStyle: null,
+        bowlingStyle: null,
+        inviteCode: null,
+      },
+    });
+    await prisma.cricketFollow.deleteMany({
+      where: { OR: [{ followerId: player.id }, { kind: "player", targetId: player.id }] },
+    });
+    await dropPlayerEverywhere(player.id, null);
+    await deleteUploadedFile(player.photoUrl);
+  }
+  await prisma.cricketPushSubscription.deleteMany({ where: { adminId } });
+  await prisma.authCode.deleteMany({ where: { adminUserId: adminId } });
+  await prisma.cricketMatch.updateMany({
+    where: { scoringById: adminId },
+    data: { scoringById: null, scoringByName: null, scoringSeenAt: null },
+  });
+  await clearOwnOrganiserContact(account, keepName);
+
+  const sessionVersion = (account.sessionVersion ?? 0) + 1;
+  if (isCricketOnly(account) && !account.listedInAdmin) {
+    try {
+      await prisma.adminUser.delete({ where: { id: account.id } });
+    } catch {
+      await prisma.adminUser.update({
+        where: { id: account.id },
+        data: {
+          name: null,
+          mobile: null,
+          email: null,
+          passwordHash: null,
+          hasCricketAccess: false,
+          isActive: false,
+          sessionVersion,
+        },
+      });
+    }
+    return { accountKept: false };
+  }
+  await prisma.adminUser.update({ where: { id: account.id }, data: { hasCricketAccess: false, sessionVersion } });
+  return { accountKept: true };
+}
+
+// The organiser contact on the tournaments this account made, where it's
+// their own name (unless kept), number or email. An organiser can also give
+// someone else's, which stays.
+async function clearOwnOrganiserContact(
+  account: { id: bigint; name: string | null; mobile: string | null; email: string | null },
+  keepName: boolean,
+) {
+  const same = (value: string | null, own: string | null) =>
+    Boolean(value && own && value.trim().toLowerCase() === own.trim().toLowerCase());
+  const tournaments = await prisma.cricketTournament.findMany({
+    where: { createdById: account.id },
+    select: { id: true, organiserName: true, organiserMobile: true, organiserEmail: true },
+  });
+  for (const t of tournaments) {
+    const data: Prisma.CricketTournamentUpdateInput = {};
+    if (!keepName && same(t.organiserName, account.name)) data.organiserName = null;
+    if (t.organiserMobile && account.mobile && normalizeMobile(t.organiserMobile) === account.mobile) {
+      data.organiserMobile = null;
+    }
+    if (same(t.organiserEmail, account.email)) data.organiserEmail = null;
+    if (Object.keys(data).length > 0) await prisma.cricketTournament.update({ where: { id: t.id }, data });
+  }
+}
+
 // ===== The signed-in player =====
 
 export async function findMyPlayer(adminId: bigint) {
