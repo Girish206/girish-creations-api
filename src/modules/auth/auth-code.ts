@@ -1,7 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import type { EmailMessage } from "../../lib/email";
-import { BRANDS, codeBlock, escapeHtml, finePrint, paragraph, renderSimpleEmail } from "../../lib/email-layout";
-import type { AuthApp } from "../../types/express";
+import { BRAND, codeBlock, escapeHtml, finePrint, paragraph, renderSimpleEmail } from "../../lib/email-layout";
 
 // One-time codes emailed for signing in, or for setting a new password.
 export type CodePurpose = "login" | "reset";
@@ -40,16 +39,8 @@ export function maskEmail(email: string) {
 const firstNameOf = (name?: string) => name?.trim().split(/\s+/)[0];
 const greeting = (name?: string) => (firstNameOf(name) ? `Hi ${firstNameOf(name)},` : "Hi,");
 
-// The account and its password are shared between both apps.
-const otherApp = (app: AuthApp) => BRANDS[app === "admin" ? "cricket" : "admin"].name;
-
-export function buildCodeEmail(
-  to: { address: string; name?: string },
-  code: string,
-  purpose: CodePurpose,
-  app: AuthApp,
-): EmailMessage {
-  const brand = BRANDS[app];
+export function buildCodeEmail(to: { address: string; name?: string }, code: string, purpose: CodePurpose): EmailMessage {
+  const brand = BRAND;
   const isLogin = purpose === "login";
   const title = isLogin ? `Your ${brand.name} sign-in code` : `Reset your ${brand.name} password`;
   const intro = isLogin
@@ -94,12 +85,8 @@ export function buildCodeEmail(
   };
 }
 
-export function buildPasswordChangedEmail(
-  to: { address: string; name?: string },
-  app: AuthApp,
-  changedAt = new Date(),
-): EmailMessage {
-  const brand = BRANDS[app];
+export function buildPasswordChangedEmail(to: { address: string; name?: string }, changedAt = new Date()): EmailMessage {
+  const brand = BRAND;
   const when = changedAt.toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
@@ -110,21 +97,19 @@ export function buildPasswordChangedEmail(
   });
   const title = "Your password was changed";
   const notice = `Your ${brand.name} password was changed on ${when} IST, and your other devices will need to sign in again.`;
-  const shared = `If you also use ${otherApp(app)} with this account, the new password works there too.`;
   const warning = "Wasn't you? Use Forgot password on the sign-in page straight away, and contact an administrator.";
   return {
     fromName: brand.name,
     to: [to],
     subject: `Your ${brand.name} password was changed`,
     clientReference: "auth-password-changed",
-    textBody: [greeting(to.name), "", notice, "", shared, "", warning, "", `- ${brand.name}`].join("\n"),
+    textBody: [greeting(to.name), "", notice, "", warning, "", `- ${brand.name}`].join("\n"),
     htmlBody: renderSimpleEmail({
       title,
       preheader: `Your ${brand.name} password was changed on ${when} IST.`,
       body: [
         paragraph(escapeHtml(greeting(to.name))),
         paragraph(notice),
-        paragraph(shared),
         finePrint(`<strong>Wasn't you?</strong> Use Forgot password on the sign-in page straight away, and contact an administrator.`),
       ].join("\n"),
       footer: `Sent by ${brand.name} to keep your account safe.`,

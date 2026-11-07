@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { signInProblem } from "../modules/auth/auth.service";
-import { currentSession, requireAdminToken as requireAdminAuth, requireAnyAppAuth, requireCricketAuth } from "./auth";
+import { currentSession, requireAdminToken } from "./auth";
 
 const base = {
   sub: "1",
@@ -26,28 +26,13 @@ function accepts(guard: (req: Request, res: Response, next: NextFunction) => voi
   }
 }
 
-const admin = { ...base, app: "admin" };
-const cricket = { ...base, app: "cricket" };
-
-test("an admin session opens the admin but not RunMitra", () => {
-  assert.equal(accepts(requireAdminAuth, admin), true);
-  assert.equal(accepts(requireCricketAuth, admin), false);
+test("an admin session opens the admin", () => {
+  assert.equal(accepts(requireAdminToken, { ...base, app: "admin" }), true);
 });
 
-test("a RunMitra session opens RunMitra but not the admin", () => {
-  assert.equal(accepts(requireCricketAuth, cricket), true);
-  assert.equal(accepts(requireAdminAuth, cricket), false);
-});
-
-test("the routes both apps share take either session", () => {
-  assert.equal(accepts(requireAnyAppAuth, admin), true);
-  assert.equal(accepts(requireAnyAppAuth, cricket), true);
-});
-
-test("a token from before the split is refused everywhere", () => {
-  assert.equal(accepts(requireAdminAuth, base), false);
-  assert.equal(accepts(requireCricketAuth, base), false);
-  assert.equal(accepts(requireAnyAppAuth, base), false);
+test("another app's session, or one that names no app, is refused", () => {
+  assert.equal(accepts(requireAdminToken, { ...base, app: "other" }), false);
+  assert.equal(accepts(requireAdminToken, base), false);
 });
 
 const account = {
@@ -61,7 +46,6 @@ const account = {
   hasPortfolioAccess: true,
   hasExpensesAccess: false,
   hasSavingsAccess: false,
-  hasCricketAccess: false,
 };
 const token = { ...base, app: "admin" as const, sv: 2 };
 

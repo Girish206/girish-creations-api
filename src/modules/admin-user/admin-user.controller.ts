@@ -31,7 +31,6 @@ const createSchema = z.object({
   hasPortfolioAccess: z.boolean().default(false),
   hasExpensesAccess: z.boolean().default(false),
   hasSavingsAccess: z.boolean().default(false),
-  hasCricketAccess: z.boolean().default(false),
   isSuperAdmin: z.boolean().default(false),
 });
 
@@ -66,7 +65,6 @@ const updateSchema = z.object({
   hasPortfolioAccess: z.boolean().optional(),
   hasExpensesAccess: z.boolean().optional(),
   hasSavingsAccess: z.boolean().optional(),
-  hasCricketAccess: z.boolean().optional(),
   isSuperAdmin: z.boolean().optional(),
 });
 

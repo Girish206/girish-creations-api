@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAnyAppAuth } from "../../middleware/auth";
+import { requireAdminToken } from "../../middleware/auth";
 import { rateLimit } from "../../middleware/rateLimit";
 import { normalizeMobile } from "../../utils/mobile";
 import {
@@ -45,6 +45,6 @@ authRouter.post("/login", ...loginLimits, asyncHandler(loginHandler));
 authRouter.post("/otp/request", ...requestCodeLimits, asyncHandler(requestCodeHandler));
 authRouter.post("/otp/login", ...useCodeLimits, asyncHandler(codeLoginHandler));
 authRouter.post("/password/reset", ...useCodeLimits, asyncHandler(resetPasswordHandler));
-authRouter.post("/refresh", requireAnyAppAuth, asyncHandler(refreshHandler));
-authRouter.get("/me", requireAnyAppAuth, asyncHandler(meHandler));
-authRouter.post("/logout", requireAnyAppAuth, asyncHandler(logoutHandler));
+authRouter.post("/refresh", requireAdminToken, asyncHandler(refreshHandler));
+authRouter.get("/me", requireAdminToken, asyncHandler(meHandler));
+authRouter.post("/logout", requireAdminToken, asyncHandler(logoutHandler));

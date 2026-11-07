@@ -5,29 +5,28 @@ import { env } from "../config/env";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ForbiddenError, UnauthorizedError } from "../utils/httpError";
-import type { AdminTokenPayload, AuthApp } from "../types/express";
+import type { AdminTokenPayload } from "../types/express";
 
-// Tokens from before the apps were split carry no `app`, so they're refused
-// everywhere and that person signs in once more.
-function requireSession(apps: AuthApp[]) {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const header = req.headers.authorization;
-    if (!header?.startsWith("Bearer ")) {
-      throw UnauthorizedError("Missing bearer token");
-    }
+// Only checks the token itself. Use requireAdminAuth to protect a route. A
+// token that isn't the admin's (old ones carry no `app`, or another app's) is
+// refused, and that person signs in once more.
+export function requireAdminToken(req: Request, _res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    throw UnauthorizedError("Missing bearer token");
+  }
 
-    let payload: AdminTokenPayload;
-    try {
-      payload = jwt.verify(header.slice("Bearer ".length), env.jwtSecret) as AdminTokenPayload;
-    } catch {
-      throw UnauthorizedError("Invalid or expired token");
-    }
-    if (!apps.includes(payload.app)) {
-      throw UnauthorizedError("This session is for a different app. Sign in again.");
-    }
-    req.admin = payload;
-    next();
-  };
+  let payload: AdminTokenPayload;
+  try {
+    payload = jwt.verify(header.slice("Bearer ".length), env.jwtSecret) as AdminTokenPayload;
+  } catch {
+    throw UnauthorizedError("Invalid or expired token");
+  }
+  if (payload.app !== "admin") {
+    throw UnauthorizedError("This session is for a different app. Sign in again.");
+  }
+  req.admin = payload;
+  next();
 }
 
 type SessionAccount = Pick<
@@ -42,7 +41,6 @@ type SessionAccount = Pick<
   | "hasPortfolioAccess"
   | "hasExpensesAccess"
   | "hasSavingsAccess"
-  | "hasCricketAccess"
 >;
 
 // The token as the account stands now, or null if the session has ended: it was
@@ -60,12 +58,8 @@ export function currentSession(token: AdminTokenPayload, account: SessionAccount
     hasPortfolioAccess: account.hasPortfolioAccess,
     hasExpensesAccess: account.hasExpensesAccess,
     hasSavingsAccess: account.hasSavingsAccess,
-    hasCricketAccess: account.hasCricketAccess,
   };
 }
-
-// Only checks the token itself. Use requireAdminAuth to protect a route.
-export const requireAdminToken = requireSession(["admin"]);
 
 const requireCurrentAccount = asyncHandler(async (req, _res, next) => {
   const account = await prisma.adminUser.findUnique({ where: { id: BigInt(req.admin!.sub) } });
@@ -77,10 +71,6 @@ const requireCurrentAccount = asyncHandler(async (req, _res, next) => {
 
 // A session from the Girish Creations admin, for an account that can still use it.
 export const requireAdminAuth = [requireAdminToken, requireCurrentAccount];
-// A session from RunMitra.
-export const requireCricketAuth = requireSession(["cricket"]);
-// Either: for what both apps share (refresh, who am I, sign out).
-export const requireAnyAppAuth = requireSession(["admin", "cricket"]);
 
 export type AdminModule = "portfolio" | "expenses" | "savings";
 
@@ -124,15 +114,6 @@ export function requireAccountManager(req: Request, _res: Response, next: NextFu
   const admin = req.admin;
   if (!isSuperAdmin(admin) && !admin?.hasExpensesAccess && !admin?.hasSavingsAccess) {
     throw ForbiddenError("No access to manage members");
-  }
-  next();
-}
-
-// Must run after requireAdminAuth. Players with cricket access (their own
-// stats, matches and tournaments) and super admins (who manage it all).
-export function requireCricketAccess(req: Request, _res: Response, next: NextFunction) {
-  if (!isSuperAdmin(req.admin) && !req.admin?.hasCricketAccess) {
-    throw ForbiddenError("No access to the cricket module");
   }
   next();
 }

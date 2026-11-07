@@ -3,7 +3,6 @@ import { env } from "../../config/env";
 import { EmailError, isEmailEnabled, sendEmail } from "../../lib/email";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../utils/httpError";
-import type { AuthApp } from "../../types/express";
 import {
   buildCodeEmail,
   buildPasswordChangedEmail,
@@ -24,12 +23,12 @@ const codeExpired = (message = "This code has expired. Ask for a new one.") =>
 // Emails a fresh code, replacing any earlier one. Only an account that can
 // already sign in may ask: a guest whose login was removed, or a deactivated
 // account, can't get back in this way.
-export async function requestCode(identifier: string, purpose: CodePurpose, app: AuthApp) {
+export async function requestCode(identifier: string, purpose: CodePurpose) {
   const account = await findSignInAccount(identifier);
   if (!account.email) {
     throw new HttpError(
       400,
-      "This account has no email address, so we can't send it a code. Sign in with your password, or ask an organiser or administrator to reset it.",
+      "This account has no email address, so we can't send it a code. Sign in with your password, or ask an administrator to reset it.",
       "NO_EMAIL",
     );
   }
@@ -58,7 +57,7 @@ export async function requestCode(identifier: string, purpose: CodePurpose, app:
   });
 
   try {
-    await sendEmail(buildCodeEmail({ address: account.email, name: account.name ?? undefined }, code, purpose, app));
+    await sendEmail(buildCodeEmail({ address: account.email, name: account.name ?? undefined }, code, purpose));
   } catch (error) {
     // They never got it, so don't make them wait out the cooldown to retry.
     await prisma.authCode.deleteMany({ where: { id: created.id } });
@@ -103,19 +102,13 @@ async function consumeCode(identifier: string, code: string, purpose: CodePurpos
   return account;
 }
 
-export async function loginWithCode(identifier: string, code: string, app: AuthApp, remember = false) {
+export async function loginWithCode(identifier: string, code: string, remember = false) {
   const account = await consumeCode(identifier, code, "login");
-  return issueToken(account, app, remember);
+  return issueToken(account, remember);
 }
 
 // Sets a new password, ends every other session, and signs in on this device.
-export async function resetPassword(
-  identifier: string,
-  code: string,
-  newPassword: string,
-  app: AuthApp,
-  remember = false,
-) {
+export async function resetPassword(identifier: string, code: string, newPassword: string, remember = false) {
   const account = await consumeCode(identifier, code, "reset");
   const updated = await prisma.adminUser.update({
     where: { id: account.id },
@@ -129,11 +122,11 @@ export async function resetPassword(
 
   // The password has changed either way, so a failed notice is only logged.
   if (account.email) {
-    await sendEmail(buildPasswordChangedEmail({ address: account.email, name: account.name ?? undefined }, app)).catch(
+    await sendEmail(buildPasswordChangedEmail({ address: account.email, name: account.name ?? undefined })).catch(
       (error: unknown) => {
         console.error("Couldn't send the password-changed notice:", error instanceof EmailError ? error.code : error);
       },
     );
   }
-  return issueToken(updated, app, remember);
+  return issueToken(updated, remember);
 }

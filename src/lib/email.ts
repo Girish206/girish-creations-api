@@ -40,8 +40,7 @@ export interface EmailAddress {
 }
 
 export interface EmailMessage {
-  // Who it appears to be from, in place of ZEPTOMAIL_FROM_NAME: both apps send
-  // from the same address, but a player should see "RunMitra" in their inbox.
+  // Who it appears to be from, in place of ZEPTOMAIL_FROM_NAME.
   fromName?: string;
   to: EmailAddress[];
   subject: string;

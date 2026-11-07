@@ -1,6 +1,6 @@
 // One-off: recompresses images uploaded before upload-time compression
 // existed (see src/lib/compressImage.ts). Each file keeps its id, so every
-// /api/files/:id URL saved on profiles, projects and tournaments still works.
+// /api/files/:id URL saved on profiles and projects still works.
 //
 //   npm run compress:files            — dry run: reports the savings only
 //   npm run compress:files -- --apply — writes the smaller versions back

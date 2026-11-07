@@ -1,6 +1,6 @@
 import type { EmailMessage } from "../../lib/email";
 import {
-  BRANDS,
+  BRAND,
   dataTable,
   detailRows,
   escapeHtml,
@@ -88,7 +88,7 @@ export function buildSplitEmail(
   sentBy: string,
   appUrl?: string,
 ): EmailMessage {
-  const brand = BRANDS.admin;
+  const brand = BRAND;
   const groupName = oneLine(group.name);
   const firstName = recipient.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";

@@ -1,16 +1,15 @@
 import type { InlineImage } from "./email";
-import { GIRISH_CREATIONS_LOGO, RUNMITRA_LOGO } from "./email-logos";
-import type { AuthApp } from "../types/express";
+import { GIRISH_CREATIONS_LOGO } from "./email-logos";
 
 // The layouts behind every email: renderEmail for the welcome email, dressed in
-// the brand of the app it's from, and renderSimpleEmail for everything else.
+// the brand, and renderSimpleEmail for everything else.
 // Email clients are far behind browsers: Outlook ignores gradients and most CSS,
 // so it's tables and inline styles, with a solid colour under every gradient.
 // The name beside the logo is text, so the brand still shows if images are blocked.
 
 export interface EmailBrand {
   name: string;
-  // The two-tone logo, e.g. "Run" + "Mitra".
+  // The two-tone logo, e.g. "Girish" + "Creations".
   wordmark: [string, string];
   tagline: string;
   logo: string;
@@ -23,31 +22,17 @@ export interface EmailBrand {
   codeBorder: string;
 }
 
-export const BRANDS: Record<AuthApp, EmailBrand> = {
-  admin: {
-    name: "Girish Creations",
-    wordmark: ["Girish", "Creations"],
-    tagline: "Portfolio &amp; Pocket",
-    logo: GIRISH_CREATIONS_LOGO,
-    headerGradient: "linear-gradient(120deg, #7c3aed 0%, #4f46e5 55%, #0284c7 100%)",
-    headerColor: "#4f46e5",
-    wordmarkAccent: "#a5f3fc",
-    accent: "#4f46e5",
-    codeBackground: "#eef2ff",
-    codeBorder: "#c7d2fe",
-  },
-  cricket: {
-    name: "RunMitra",
-    wordmark: ["Run", "Mitra"],
-    tagline: "Every ball. Every stat.",
-    logo: RUNMITRA_LOGO,
-    headerGradient: "linear-gradient(120deg, #3a1214 0%, #5a1d1c 55%, #7a2420 100%)",
-    headerColor: "#5a1d1c",
-    wordmarkAccent: "#ffcd00",
-    accent: "#7a2420",
-    codeBackground: "#fff8e1",
-    codeBorder: "#ffe082",
-  },
+export const BRAND: EmailBrand = {
+  name: "Girish Creations",
+  wordmark: ["Girish", "Creations"],
+  tagline: "Portfolio &amp; Pocket",
+  logo: GIRISH_CREATIONS_LOGO,
+  headerGradient: "linear-gradient(120deg, #7c3aed 0%, #4f46e5 55%, #0284c7 100%)",
+  headerColor: "#4f46e5",
+  wordmarkAccent: "#a5f3fc",
+  accent: "#4f46e5",
+  codeBackground: "#eef2ff",
+  codeBorder: "#c7d2fe",
 };
 
 const LOGO_CID = "brand-logo";

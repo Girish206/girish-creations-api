@@ -1,11 +1,10 @@
-// Checks the ZeptoMail setup by sending real test emails, one in each app's
-// look, built from the templates people actually receive:
+// Checks the ZeptoMail setup by sending real test emails, built from the
+// templates people actually receive:
 //   npm run email:test -- you@example.com
 import { env } from "../src/config/env";
 import { EmailError, isEmailEnabled, sendEmail } from "../src/lib/email";
 import { buildWelcomeEmail } from "../src/modules/admin-user/welcome-email";
 import { buildCodeEmail } from "../src/modules/auth/auth-code";
-import type { AuthApp } from "../src/types/express";
 
 async function main() {
     const to = process.argv[2];
@@ -24,25 +23,13 @@ async function main() {
         isOwner: false,
         isSuperAdmin: false,
         hasPortfolioAccess: false,
-        hasExpensesAccess: false,
-        hasSavingsAccess: false,
-        hasCricketAccess: true,
+        hasExpensesAccess: true,
+        hasSavingsAccess: true,
     };
     const emails = [
-        ...(["admin", "cricket"] as AuthApp[]).map(
-            // A made-up code: nothing is stored, so it can't sign anyone in.
-            (app) => buildCodeEmail({ address: to }, "123456", "login", app),
-        ),
-        buildWelcomeEmail(
-            {
-                ...account,
-                hasExpensesAccess: true,
-                hasSavingsAccess: true,
-                hasCricketAccess: false,
-            },
-            env.signInUrls,
-        ),
-        buildWelcomeEmail(account, env.signInUrls),
+        // A made-up code: nothing is stored, so it can't sign anyone in.
+        buildCodeEmail({ address: to }, "123456", "login"),
+        buildWelcomeEmail(account, env.adminSignInUrl),
     ];
     for (const email of emails) {
         const requestId = await sendEmail({

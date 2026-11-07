@@ -5,7 +5,7 @@ import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { HttpError, UnauthorizedError } from "../../utils/httpError";
 import { normalizeMobile } from "../../utils/mobile";
-import type { AdminTokenPayload, AuthApp } from "../../types/express";
+import type { AdminTokenPayload } from "../../types/express";
 
 // Finds the account for an email address or a mobile number.
 async function findByIdentifier(identifier: string) {
@@ -23,10 +23,10 @@ const canSignIn = (admin: AdminUser) =>
 
 // Signs a token for the account as it is now. `remember` makes it a
 // long-lived session (env.jwtRememberExpiresIn) instead of env.jwtExpiresIn.
-export function issueToken(admin: AdminUser, app: AuthApp, remember = false) {
+export function issueToken(admin: AdminUser, remember = false) {
   const payload: AdminTokenPayload = {
     sub: String(admin.id),
-    app,
+    app: "admin",
     email: admin.email,
     name: admin.name,
     isOwner: admin.isOwner,
@@ -34,7 +34,6 @@ export function issueToken(admin: AdminUser, app: AuthApp, remember = false) {
     hasPortfolioAccess: admin.hasPortfolioAccess,
     hasExpensesAccess: admin.hasExpensesAccess,
     hasSavingsAccess: admin.hasSavingsAccess,
-    hasCricketAccess: admin.hasCricketAccess,
     ...(remember ? { remember: true } : {}),
     sv: admin.sessionVersion ?? 0,
   };
@@ -52,14 +51,13 @@ export function issueToken(admin: AdminUser, app: AuthApp, remember = false) {
       hasPortfolioAccess: admin.hasPortfolioAccess,
       hasExpensesAccess: admin.hasExpensesAccess,
       hasSavingsAccess: admin.hasSavingsAccess,
-      hasCricketAccess: admin.hasCricketAccess,
     },
   };
 }
 
 // Why an account can't sign in, so the login screen can say what's wrong. This
-// does tell whether an account exists, which RunMitra's sign-in lookup already
-// does; the rate limits on /login keep it from being used to list them.
+// does tell whether an account exists; the rate limits on /login keep it from
+// being used to list them.
 export function signInProblem(admin: Pick<AdminUser, "isActive"> | null, identifier: string) {
   if (!admin) {
     const kind = identifier.includes("@") ? "email" : "mobile number";
@@ -74,34 +72,22 @@ export function signInProblem(admin: Pick<AdminUser, "isActive"> | null, identif
 // The account for an email or mobile number, as long as it's allowed to sign in
 // at all. Every way of signing in goes through this.
 export async function findSignInAccount(identifier: string) {
-  const mobile = identifier.includes("@") ? null : normalizeMobile(identifier);
-  if (!identifier.includes("@") && !mobile) {
+  if (!identifier.includes("@") && !normalizeMobile(identifier)) {
     throw new HttpError(400, "Enter a valid email or 10-digit mobile number.", "INVALID_IDENTIFIER");
   }
   const admin = await findByIdentifier(identifier);
-  if (!admin || !canSignIn(admin)) {
-    // An organiser added this number to the cricket pool (or as a guest)
-    // but nobody has set a password for it yet: point them at sign-up.
-    const pendingPlayer =
-      mobile && (!admin || (admin.isActive && admin.passwordHash === null))
-        ? await prisma.cricketPlayer.findFirst({ where: { mobile } })
-        : null;
-    if (pendingPlayer) {
-      throw new HttpError(401, "This number has no password yet. Create your account to set one.", "NO_PASSWORD");
-    }
-    throw signInProblem(admin, identifier);
-  }
+  if (!admin || !canSignIn(admin)) throw signInProblem(admin, identifier);
   return admin;
 }
 
-export async function login(identifier: string, password: string, app: AuthApp, remember = false) {
+export async function login(identifier: string, password: string, remember = false) {
   const admin = await findSignInAccount(identifier);
   const valid = await bcrypt.compare(password, admin.passwordHash!);
   if (!valid) {
     throw new HttpError(401, "That password isn't right.", "WRONG_PASSWORD");
   }
 
-  return issueToken(admin, app, remember);
+  return issueToken(admin, remember);
 }
 
 // Swaps a still-valid token for a fresh one carrying the account's current
@@ -113,11 +99,11 @@ export async function refresh(current: AdminTokenPayload, remember = false) {
   if (!admin || !canSignIn(admin) || (current.sv ?? 0) !== (admin.sessionVersion ?? 0)) {
     throw UnauthorizedError("This account can no longer sign in");
   }
-  return issueToken(admin, current.app, Boolean(current.remember) || remember);
+  return issueToken(admin, Boolean(current.remember) || remember);
 }
 
 // Signs this account out on every device: tokens issued before now stop
-// working wherever the version is checked (CricDesk's API, and refresh).
+// working on the next request (requireAdminAuth) or refresh.
 export async function signOutEverywhere(adminId: bigint) {
   await prisma.adminUser.update({ where: { id: adminId }, data: { sessionVersion: { increment: 1 } } });
 }

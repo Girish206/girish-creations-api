@@ -1,6 +1,6 @@
 import type { EmailMessage } from "../../lib/email";
 import {
-  BRANDS,
+  BRAND,
   button,
   detailsPanel,
   escapeHtml,
@@ -11,7 +11,6 @@ import {
   renderEmail,
   sectionHeading,
 } from "../../lib/email-layout";
-import type { AuthApp } from "../../types/express";
 
 export interface WelcomeAccount {
   email: string;
@@ -22,27 +21,6 @@ export interface WelcomeAccount {
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
-  hasCricketAccess: boolean;
-}
-
-// Someone who only plays cricket has only ever heard of RunMitra.
-export function welcomeAppFor(account: Omit<WelcomeAccount, "email">): AuthApp {
-  const usesAdmin =
-    account.isOwner ||
-    account.isSuperAdmin ||
-    account.hasPortfolioAccess ||
-    account.hasExpensesAccess ||
-    account.hasSavingsAccess;
-  return usesAdmin || !account.hasCricketAccess ? "admin" : "cricket";
-}
-
-// Every app they can use, the one the email is from first. Someone who only
-// plays cricket isn't sent a link to the admin, or the other way round.
-function appsOf(account: Omit<WelcomeAccount, "email">): AuthApp[] {
-  const main = welcomeAppFor(account);
-  const other: AuthApp = main === "admin" ? "cricket" : "admin";
-  const usesOther = other === "cricket" && account.hasCricketAccess;
-  return usesOther ? [main, other] : [main];
 }
 
 function featuresOf(account: WelcomeAccount) {
@@ -62,19 +40,14 @@ function featuresOf(account: WelcomeAccount) {
       title: "Savings",
       description: "Set savings goals and keep track of contributions.",
     },
-    {
-      on: account.hasCricketAccess,
-      title: "RunMitra",
-      description: "Follow your matches, tournaments and cricket stats.",
-    },
   ];
   return features.filter((feature) => feature.on);
 }
 
 // Sent only when someone chooses to from the admin side. The password is never
 // included: they use the one they were given, or set their own with a code.
-export function buildWelcomeEmail(account: WelcomeAccount, appUrls: Partial<Record<AuthApp, string>> = {}): EmailMessage {
-  const brand = BRANDS[welcomeAppFor(account)];
+export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): EmailMessage {
+  const brand = BRAND;
   const firstName = account.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
   const title = `Welcome to ${brand.name}`;
@@ -84,10 +57,7 @@ export function buildWelcomeEmail(account: WelcomeAccount, appUrls: Partial<Reco
     "Use the password you were given or already have. To choose a new one, select Forgot password on the sign-in page and we'll email you a code.";
   const security = "For your security, we never send passwords by email and will never ask you for yours.";
   const help = "Need a hand? Just reply to this email and we'll help you out.";
-  const appLinks = appsOf(account).flatMap((app) => {
-    const url = appUrls[app];
-    return url ? [{ brand: BRANDS[app], url }] : [];
-  });
+  const signInLabel = `Sign in to ${brand.name}`;
 
   return {
     fromName: brand.name,
@@ -107,7 +77,7 @@ export function buildWelcomeEmail(account: WelcomeAccount, appUrls: Partial<Reco
       `Email: ${account.email}`,
       ...(account.mobile ? [`Or mobile: ${account.mobile}`] : []),
       `Password: ${passwordHelp}`,
-      ...(appLinks.length ? ["", ...appLinks.map((app) => `Sign in to ${app.brand.name}: ${app.url}`)] : []),
+      ...(signInUrl ? ["", `${signInLabel}: ${signInUrl}`] : []),
       "",
       security,
       help,
@@ -134,16 +104,11 @@ export function buildWelcomeEmail(account: WelcomeAccount, appUrls: Partial<Reco
           ...(account.mobile ? [{ label: "Or mobile", value: escapeHtml(account.mobile) }] : []),
           { label: "Password", value: passwordHelp },
         ]),
-        ...appLinks.map((app) => button(app.brand, `Sign in to ${app.brand.name}`, app.url)),
-        ...(appLinks.length
+        ...(signInUrl
           ? [
+              button(brand, signInLabel, signInUrl),
               finePrint(
-                appLinks
-                  .map((app) => {
-                    const url = escapeHtml(app.url);
-                    return `${app.brand.name}: <a href="${url}" style="color: ${app.brand.accent}">${url}</a>`;
-                  })
-                  .join("<br>"),
+                `${brand.name}: <a href="${escapeHtml(signInUrl)}" style="color: ${brand.accent}">${escapeHtml(signInUrl)}</a>`,
               ),
             ]
           : []),

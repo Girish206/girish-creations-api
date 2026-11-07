@@ -1,10 +1,7 @@
-// Which app a sign-in is for. The password is shared, but a session from one
-// is refused by the other.
-export type AuthApp = "admin" | "cricket";
-
 export interface AdminTokenPayload {
   sub: string;
-  app: AuthApp;
+  // Always "admin". A token without it, or naming another app, is refused.
+  app: "admin";
   // Null for an account that signs in with its mobile number only.
   email: string | null;
   name: string | null;
@@ -15,8 +12,6 @@ export interface AdminTokenPayload {
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
-  // Missing on tokens issued before it existed (= false).
-  hasCricketAccess?: boolean;
   // A long-lived "keep me signed in" session (env.jwtRememberExpiresIn);
   // refreshing keeps it long-lived.
   remember?: boolean;

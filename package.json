@@ -15,7 +15,6 @@
     "seed:categories": "tsx prisma/seed-expense-categories.ts",
     "migrate:link-profiles": "tsx prisma/link-profiles.ts",
     "migrate:dedupe-profiles": "tsx prisma/dedupe-profiles.ts",
-    "migrate:mark-manual-teams": "tsx prisma/mark-manual-teams.ts",
     "compress:files": "tsx prisma/compress-files.ts"
   },
   "keywords": [],
@@ -31,7 +30,6 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
     "sharp": "^0.35.5",
-    "web-push": "^3.6.7",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -41,7 +39,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.5.0",
-    "@types/web-push": "^3.6.4",
     "prisma": "^6.19.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3"

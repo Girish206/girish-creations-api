@@ -19,7 +19,6 @@ const rawSelectFields = {
   hasPortfolioAccess: true,
   hasExpensesAccess: true,
   hasSavingsAccess: true,
-  hasCricketAccess: true,
   passwordHash: true,
   listedInAdmin: true,
   welcomeEmailSentAt: true,
@@ -67,21 +66,20 @@ export interface ActingAdmin {
 }
 
 // A member without super admin may only add people for the Money Hub: no
-// portfolio or cricket access, no super admin, and at most the expense/
-// savings access they have themselves.
+// portfolio access, no super admin, and at most the expense/savings access
+// they have themselves.
 function assertMemberGrant(
   actor: ActingAdmin,
   flags: {
     hasPortfolioAccess?: boolean;
     hasExpensesAccess?: boolean;
     hasSavingsAccess?: boolean;
-    hasCricketAccess?: boolean;
     isSuperAdmin?: boolean;
   },
 ) {
   if (actor.isSuperAdmin) return;
-  if (flags.hasPortfolioAccess || flags.hasCricketAccess || flags.isSuperAdmin) {
-    throw ForbiddenError("Only super admins can grant portfolio, cricket or super admin access");
+  if (flags.hasPortfolioAccess || flags.isSuperAdmin) {
+    throw ForbiddenError("Only super admins can grant portfolio or super admin access");
   }
   if ((flags.hasExpensesAccess && !actor.hasExpensesAccess) || (flags.hasSavingsAccess && !actor.hasSavingsAccess)) {
     throw ForbiddenError("You can only grant access you have yourself");
@@ -91,18 +89,11 @@ function assertMemberGrant(
 // Managing someone includes setting their password, so a member only manages
 // people they added who still have nothing beyond what the member has. Someone
 // later given more than that is out of their hands, or a member could sign in
-// as an account more powerful than their own. The password is also RunMitra's,
-// so cricket access counts too.
+// as an account more powerful than their own.
 export function memberMayManage(
   target: Pick<
     AdminUser,
-    | "createdByAdminUserId"
-    | "isOwner"
-    | "isSuperAdmin"
-    | "hasPortfolioAccess"
-    | "hasCricketAccess"
-    | "hasExpensesAccess"
-    | "hasSavingsAccess"
+    "createdByAdminUserId" | "isOwner" | "isSuperAdmin" | "hasPortfolioAccess" | "hasExpensesAccess" | "hasSavingsAccess"
   >,
   actor: Pick<ActingAdmin, "id" | "hasExpensesAccess" | "hasSavingsAccess">,
 ) {
@@ -111,7 +102,6 @@ export function memberMayManage(
     !target.isOwner &&
     !target.isSuperAdmin &&
     !target.hasPortfolioAccess &&
-    !target.hasCricketAccess &&
     (!target.hasExpensesAccess || actor.hasExpensesAccess) &&
     (!target.hasSavingsAccess || actor.hasSavingsAccess)
   );
@@ -152,21 +142,19 @@ function assertCanSetSuperAdmin(actor: ActingAdmin, value: boolean | undefined) 
   }
 }
 
-// The accounts table also holds every RunMitra player, since it's one login
-// for both apps. Someone belongs in the Money Hub if they have access to it,
-// were added to it (a guest, or a RunMitra player listed on purpose), or have
-// money records in it — a player who only uses RunMitra doesn't.
+// Someone belongs in the Money Hub if they have access to it, were added to it
+// (a guest, or someone with an account listed on purpose), or have money
+// records in it. An account that can sign in but has none of that doesn't.
 export function isMoneyHubPerson(row: {
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
-  hasCricketAccess: boolean;
   listedInAdmin: boolean | null;
   passwordHash: string | null;
   linkedRecords: number;
 }) {
   if (row.hasExpensesAccess || row.hasSavingsAccess || row.listedInAdmin) return true;
   if (row.linkedRecords > 0) return true;
-  return row.passwordHash === null && !row.hasCricketAccess;
+  return row.passwordHash === null;
 }
 
 export type AccountScope = "money-hub" | "portfolio";
@@ -210,7 +198,7 @@ export async function listExpenseMembers(actor: Pick<ActingAdmin, "id" | "isSupe
       OR: [
         { hasExpensesAccess: true },
         { hasSavingsAccess: true },
-        { passwordHash: null, NOT: { hasCricketAccess: true } },
+        { passwordHash: null },
         { listedInAdmin: true },
       ],
     },
@@ -243,14 +231,13 @@ export interface CreateAdminUserInput {
   email?: string | null;
   mobile?: string | null;
   password?: string | null;
-  // Asks for login access. If the person already has an account (they signed
-  // up on RunMitra), a blank password keeps the one they have.
+  // Asks for login access. If the person already has an account, a blank
+  // password keeps the one they have.
   grantLogin?: boolean;
   name?: string | null;
   hasPortfolioAccess: boolean;
   hasExpensesAccess: boolean;
   hasSavingsAccess: boolean;
-  hasCricketAccess?: boolean;
   isSuperAdmin?: boolean;
 }
 
@@ -290,9 +277,9 @@ export function planExistingAccount(
   return "grant";
 }
 
-// One account covers every app, so someone who already has one (from RunMitra,
-// or from another part of the admin) gets the access asked for added to it. What
-// they already have stays, and otherwise they're just listed.
+// Someone who already has an account (from another part of the admin) gets the
+// access asked for added to it. What they already have stays, and otherwise
+// they're just listed.
 async function addExistingAccount(existing: AdminUser, input: CreateAdminUserInput, actor: ActingAdmin) {
   const grantLogin = Boolean(input.grantLogin || input.password);
   if (planExistingAccount(existing, grantLogin, actor, input) === "list") {
@@ -305,7 +292,6 @@ async function addExistingAccount(existing: AdminUser, input: CreateAdminUserInp
   }
 
   assertMayChangeAccount(existing, actor);
-  // The password is shared, so a new one changes it on RunMitra as well.
   const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : existing.passwordHash;
   if (grantLogin && !passwordHash) {
     throw BadRequestError("This person has no password yet. Set one to give them access.");
@@ -360,7 +346,6 @@ export async function createAdminUser(input: CreateAdminUserInput, actor: Acting
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
-      hasCricketAccess: input.hasCricketAccess ?? false,
       isSuperAdmin: input.isSuperAdmin ?? false,
       createdByAdminUserId: actor.id,
     },
@@ -383,7 +368,6 @@ export interface UpdateAdminUserInput {
   hasPortfolioAccess?: boolean;
   hasExpensesAccess?: boolean;
   hasSavingsAccess?: boolean;
-  hasCricketAccess?: boolean;
   isSuperAdmin?: boolean;
 }
 
@@ -440,7 +424,6 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, a
       hasPortfolioAccess: input.hasPortfolioAccess,
       hasExpensesAccess: input.hasExpensesAccess,
       hasSavingsAccess: input.hasSavingsAccess,
-      hasCricketAccess: input.hasCricketAccess,
       isSuperAdmin: existing.isOwner ? undefined : superAdminChange,
     },
     select: rawSelectFields,
@@ -476,7 +459,7 @@ export async function sendWelcomeEmail(id: bigint, actor: ActingAdmin) {
   }
 
   try {
-    await sendEmail(buildWelcomeEmail({ ...account, email: account.email! }, env.signInUrls));
+    await sendEmail(buildWelcomeEmail({ ...account, email: account.email! }, env.adminSignInUrl));
   } catch (error) {
     const reason = error instanceof EmailError ? `${error.code}: ${error.message}` : error;
     console.error("Couldn't send a welcome email:", reason);

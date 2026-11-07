@@ -14,7 +14,6 @@ const added = {
   isOwner: false,
   isSuperAdmin: false,
   hasPortfolioAccess: false,
-  hasCricketAccess: false,
   hasExpensesAccess: true,
   hasSavingsAccess: false,
 };
@@ -28,7 +27,6 @@ test("a member can't manage, or so sign in as, someone later given more than the
   assert.equal(memberMayManage({ ...added, isSuperAdmin: true }, member), false);
   assert.equal(memberMayManage({ ...added, isOwner: true }, member), false);
   assert.equal(memberMayManage({ ...added, hasPortfolioAccess: true }, member), false);
-  assert.equal(memberMayManage({ ...added, hasCricketAccess: true }, member), false);
   assert.equal(memberMayManage({ ...added, hasSavingsAccess: true }, member), false);
 });
 
@@ -58,7 +56,7 @@ test("a welcome email can be sent again, but not straight away", () => {
   assert.equal(welcomeEmailBlocker(account, sentAt.getTime() + 60_000), null);
 });
 
-const runMitraPlayer = {
+const withAccount = {
   isActive: true,
   isOwner: false,
   isSuperAdmin: false,
@@ -69,57 +67,54 @@ const runMitraPlayer = {
 };
 const superAdmin = { isSuperAdmin: true };
 
-test("a RunMitra player is given access, or just listed", () => {
-  assert.equal(planExistingAccount(runMitraPlayer, true, superAdmin), "grant");
-  assert.equal(planExistingAccount(runMitraPlayer, false, superAdmin), "list");
+test("someone who already has an account is given access, or just listed", () => {
+  assert.equal(planExistingAccount(withAccount, true, superAdmin), "grant");
+  assert.equal(planExistingAccount(withAccount, false, superAdmin), "list");
 });
 
 test("only a super admin can add someone who already has an account", () => {
-  assert.throws(() => planExistingAccount(runMitraPlayer, true, { isSuperAdmin: false }), /Ask a super admin/);
-  assert.throws(() => planExistingAccount(runMitraPlayer, false, { isSuperAdmin: false }), /Ask a super admin/);
+  assert.throws(() => planExistingAccount(withAccount, true, { isSuperAdmin: false }), /Ask a super admin/);
+  assert.throws(() => planExistingAccount(withAccount, false, { isSuperAdmin: false }), /Ask a super admin/);
 });
 
 test("someone with admin access already is edited, not granted again", () => {
-  const member = { ...runMitraPlayer, hasExpensesAccess: true, passwordHash: "hash" };
+  const member = { ...withAccount, hasExpensesAccess: true, passwordHash: "hash" };
   assert.throws(() => planExistingAccount(member, true, superAdmin), /already has admin access/);
   assert.equal(planExistingAccount(member, false, superAdmin), "list");
 });
 
 test("access for another app is added to an account that already exists", () => {
-  const moneyHubMember = { ...runMitraPlayer, hasExpensesAccess: true };
-  const portfolioOnly = { ...runMitraPlayer, hasPortfolioAccess: true };
+  const moneyHubMember = { ...withAccount, hasExpensesAccess: true };
+  const portfolioOnly = { ...withAccount, hasPortfolioAccess: true };
   assert.equal(planExistingAccount(moneyHubMember, true, superAdmin, { hasPortfolioAccess: true }), "grant");
   assert.equal(planExistingAccount(moneyHubMember, false, superAdmin, { hasPortfolioAccess: true }), "grant");
   assert.equal(planExistingAccount(portfolioOnly, false, superAdmin, { hasExpensesAccess: true }), "grant");
-  assert.equal(planExistingAccount({ ...runMitraPlayer, passwordHash: null }, false, superAdmin, { hasSavingsAccess: true }), "grant");
+  assert.equal(planExistingAccount({ ...withAccount, passwordHash: null }, false, superAdmin, { hasSavingsAccess: true }), "grant");
 });
 
 test("someone who already has the access asked for is edited instead", () => {
-  const portfolioOnly = { ...runMitraPlayer, hasPortfolioAccess: true };
+  const portfolioOnly = { ...withAccount, hasPortfolioAccess: true };
   assert.throws(() => planExistingAccount(portfolioOnly, true, superAdmin, { hasPortfolioAccess: true }), /already has admin access/);
   assert.throws(() => planExistingAccount(portfolioOnly, false, superAdmin, { hasPortfolioAccess: true }), /already has admin access/);
 });
 
 test("a member can't add access to someone's existing account", () => {
-  assert.throws(() => planExistingAccount(runMitraPlayer, false, { isSuperAdmin: false }, { hasExpensesAccess: true }), /Ask a super admin/);
+  assert.throws(() => planExistingAccount(withAccount, false, { isSuperAdmin: false }, { hasExpensesAccess: true }), /Ask a super admin/);
 });
 
 test("a deactivated account has to be restored first", () => {
-  assert.throws(() => planExistingAccount({ ...runMitraPlayer, isActive: false }, true, superAdmin), /deactivated/);
+  assert.throws(() => planExistingAccount({ ...withAccount, isActive: false }, true, superAdmin), /deactivated/);
 });
 
 const noOne = {
   hasExpensesAccess: false,
   hasSavingsAccess: false,
-  hasCricketAccess: false,
   listedInAdmin: null,
   passwordHash: "hash",
   linkedRecords: 0,
 };
 
-test("a player who only uses RunMitra isn't a Money Hub person", () => {
-  assert.equal(isMoneyHubPerson({ ...noOne, hasCricketAccess: true }), false);
-  assert.equal(isMoneyHubPerson({ ...noOne, hasCricketAccess: true, passwordHash: null }), false);
+test("an account that can only sign in isn't a Money Hub person", () => {
   assert.equal(isMoneyHubPerson(noOne), false);
 });
 
@@ -127,9 +122,9 @@ test("Money Hub access, a guest, or being listed on purpose makes someone a Mone
   assert.equal(isMoneyHubPerson({ ...noOne, hasExpensesAccess: true }), true);
   assert.equal(isMoneyHubPerson({ ...noOne, hasSavingsAccess: true }), true);
   assert.equal(isMoneyHubPerson({ ...noOne, passwordHash: null }), true);
-  assert.equal(isMoneyHubPerson({ ...noOne, hasCricketAccess: true, listedInAdmin: true }), true);
+  assert.equal(isMoneyHubPerson({ ...noOne, listedInAdmin: true }), true);
 });
 
 test("someone with money records stays visible after losing access", () => {
-  assert.equal(isMoneyHubPerson({ ...noOne, hasCricketAccess: true, linkedRecords: 3 }), true);
+  assert.equal(isMoneyHubPerson({ ...noOne, linkedRecords: 3 }), true);
 });

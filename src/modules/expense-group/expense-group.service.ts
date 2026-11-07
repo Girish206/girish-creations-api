@@ -323,7 +323,7 @@ export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
   const sentBy = sender.name?.trim() || (sender.email ? maskEmail(sender.email) : "Someone");
   const emailGroup = { id, name: group.name, ...summary, transfers: suggestTransfers(summary.balances) };
   const results = await Promise.allSettled(
-    recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.signInUrls.admin))),
+    recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.adminSignInUrl))),
   );
   const failed = results.flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));
   for (const error of failed) {

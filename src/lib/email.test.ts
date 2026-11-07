@@ -67,8 +67,8 @@ test("sends ZeptoMail's format and returns the request id", async () => {
 
 test("replies go to the shared inbox unless an email names someone else", async () => {
   delete process.env.ZEPTOMAIL_REPLY_TO;
-  await sendEmail({ ...message, fromName: "RunMitra" });
-  assert.deepEqual(lastRequest?.body.reply_to, [{ address: "runmithra@gmail.com", name: "RunMitra" }]);
+  await sendEmail({ ...message, fromName: "Someone Else" });
+  assert.deepEqual(lastRequest?.body.reply_to, [{ address: "runmithra@gmail.com", name: "Someone Else" }]);
 
   process.env.ZEPTOMAIL_REPLY_TO = "help@example.com";
   await sendEmail(message);
@@ -76,9 +76,9 @@ test("replies go to the shared inbox unless an email names someone else", async 
   delete process.env.ZEPTOMAIL_REPLY_TO;
 });
 
-test("an email can say which app it's from", async () => {
-  await sendEmail({ ...message, fromName: "RunMitra" });
-  assert.deepEqual(lastRequest?.body.from, { address: "hello@example.com", name: "RunMitra" });
+test("an email can say who it's from", async () => {
+  await sendEmail({ ...message, fromName: "Someone Else" });
+  assert.deepEqual(lastRequest?.body.from, { address: "hello@example.com", name: "Someone Else" });
 });
 
 test("sends inline images in ZeptoMail's format", async () => {
