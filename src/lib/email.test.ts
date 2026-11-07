@@ -65,10 +65,10 @@ test("sends ZeptoMail's format and returns the request id", async () => {
   });
 });
 
-test("replies go to the shared inbox unless an email names someone else", async () => {
+test("replies go to the Girish Creations inbox unless an email names someone else", async () => {
   delete process.env.ZEPTOMAIL_REPLY_TO;
   await sendEmail({ ...message, fromName: "Someone Else" });
-  assert.deepEqual(lastRequest?.body.reply_to, [{ address: "runmithra@gmail.com", name: "Someone Else" }]);
+  assert.deepEqual(lastRequest?.body.reply_to, [{ address: "runmithra@gmail.com", name: "Girish Creations" }]);
 
   process.env.ZEPTOMAIL_REPLY_TO = "help@example.com";
   await sendEmail(message);
