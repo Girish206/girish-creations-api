@@ -13,9 +13,21 @@ function plural(count: number, unit: string) {
 // Completed months only (floored, not rounded) — rounding reported a month
 // early (e.g. "5 years 8 months" for 5y 7m 17d) and could even produce
 // "12 months", and it disagreed with the per-role durations on the About page.
+//
+// A zero part is left out ("9 months", "2 years", not "0 years 9 months").
+// Under a month reads "less than a month" — lower case, since it's dropped
+// into the middle of a bio ("with {{experience}} of experience"). No
+// experience at all is "", so the site hides the line instead of "0 months".
 export function formatExperience(totalExperience: string | number) {
-  const totalMonths = Math.floor(Number(totalExperience) * 12 + 1e-9);
-  return `${plural(Math.floor(totalMonths / 12), "year")} ${plural(totalMonths % 12, "month")}`;
+  const years = Number(totalExperience);
+  if (!(years > 0)) return "";
+  const totalMonths = Math.floor(years * 12 + 1e-9);
+  if (totalMonths === 0) return "less than a month";
+  const wholeYears = Math.floor(totalMonths / 12);
+  const months = totalMonths % 12;
+  return [wholeYears > 0 && plural(wholeYears, "year"), months > 0 && plural(months, "month")]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function formatExperienceInYears(totalExperience: string | number) {
