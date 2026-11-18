@@ -126,3 +126,25 @@ test("nothing can be repaid the wrong way round, or by someone with no balance",
   assert.equal(maxRepaymentCents(balances, 2n, 1n), 0);
   assert.equal(maxRepaymentCents(balances, 9n, 2n), 0);
 });
+
+// A fund trip: Deeksha keeps the fund, so everyone settles with her, never
+// with each other.
+test("with a fund, everyone pays or is paid by whoever keeps it", () => {
+  const balances = [balance(DEEKSHA, -30000), balance(GIRISH, 50000), balance(KIRAN, -40000), balance(MAHESH, 20000)];
+  const fundRows = (list: MemberBalance[]) =>
+    suggestTransfers(list, DEEKSHA).map((row) => [row.fromAdminUserId, row.toAdminUserId, row.amountCents]);
+  // What comes in to her first, then what she pays out.
+  assert.deepEqual(fundRows(balances), [
+    [KIRAN, DEEKSHA, 40000],
+    [DEEKSHA, GIRISH, 50000],
+    [DEEKSHA, MAHESH, 20000],
+  ]);
+  assert.equal(maxRepaymentCents(balances, KIRAN, DEEKSHA, DEEKSHA), 40000);
+  assert.equal(maxRepaymentCents(balances, KIRAN, GIRISH, DEEKSHA), 0);
+  // A part payment only lowers that person's row.
+  assert.deepEqual(fundRows(repay(balances, KIRAN, DEEKSHA, 10000)), [
+    [KIRAN, DEEKSHA, 30000],
+    [DEEKSHA, GIRISH, 50000],
+    [DEEKSHA, MAHESH, 20000],
+  ]);
+});

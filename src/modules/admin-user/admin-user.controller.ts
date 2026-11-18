@@ -88,3 +88,13 @@ export async function deleteAdminUserHandler(req: Request, res: Response) {
   await adminUserService.deleteAdminUser(id, actingAdmin(req), req.query.permanent === "true");
   res.status(204).send();
 }
+
+const mergeSchema = z.object({ intoId: z.coerce.number().int().positive().transform(BigInt) });
+
+// Folds a duplicate person into another (owner only, checked in the service).
+export async function mergeAdminUserHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { intoId } = mergeSchema.parse(req.body);
+  await adminUserService.mergeAdminUser(id, intoId, actingAdmin(req));
+  res.status(204).send();
+}

@@ -15,6 +15,15 @@ test("the payer leads an equal split, and nobody is listed twice", () => {
   assert.deepEqual(normalizeSplit([2n, 1n, 2n], 1n), [1n, 2n]);
 });
 
+test("the payer can be left out, for an expense they covered for the others", () => {
+  assert.deepEqual(normalizeSplit([2n, 3n, 4n, 5n], 1n), [2n, 3n, 4n, 5n]);
+  assert.deepEqual(normalizeSplit([3n], 1n), [3n]);
+  assert.deepEqual(
+    computeEqualShares("1000.00", normalizeSplit([2n, 3n, 4n, 5n], 1n)).map((s) => s.shareAmount),
+    ["250.00", "250.00", "250.00", "250.00"],
+  );
+});
+
 test("a split with nobody else in it is no split", () => {
   assert.deepEqual(normalizeSplit([1n], 1n), []);
   assert.deepEqual(normalizeSplit([], 1n), []);

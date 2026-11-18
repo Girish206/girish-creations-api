@@ -2,9 +2,10 @@ import { prisma } from "../../lib/prisma";
 import { ForbiddenError } from "../../utils/httpError";
 
 // Who someone may pick for a split, group or savings goal: people they added,
-// whoever added them and the others that person added, and anyone they already
-// share a group, goal, expense or repayment with. It stops a member listing
-// every account, or putting a debt on a stranger.
+// whoever added them, and anyone they already share a group, goal, expense or
+// repayment with. Not the others their adder added: two people added by the
+// same person only see each other once something puts them together. It stops
+// a member listing every account, or putting a debt on a stranger.
 export async function connectedPeopleIds(adminId: bigint): Promise<Set<bigint>> {
   const me = await prisma.adminUser.findUnique({ where: { id: adminId }, select: { createdByAdminUserId: true } });
   const addedBy = me?.createdByAdminUserId ?? null;
@@ -12,7 +13,7 @@ export async function connectedPeopleIds(adminId: bigint): Promise<Set<bigint>> 
 
   const [added, groupMembers, goals, expenses, settlements] = await Promise.all([
     prisma.adminUser.findMany({
-      where: { createdByAdminUserId: { in: addedBy ? [adminId, addedBy] : [adminId] } },
+      where: { createdByAdminUserId: adminId },
       select: { id: true },
     }),
     prisma.expenseGroupMember.findMany({

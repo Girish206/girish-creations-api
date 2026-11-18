@@ -65,7 +65,28 @@ export interface SuggestedTransfer {
 // not from what's still pending, so a part payment only lowers its own row and
 // nobody is moved on to paying someone else. Only changing an expense can change
 // the pairs. The settle-up screen does the same (groupSettlement.ts on the client).
-export function suggestTransfers(balances: MemberBalance[]): SuggestedTransfer[] {
+// With a shared fund, everyone settles with whoever keeps the fund instead: they
+// hold the money, so they pay back what each person is owed and collect from
+// each person who owes, and nobody pays anyone else. What comes in to them is
+// listed first (biggest first), then what they pay out (biggest first).
+export function suggestTransfers(balances: MemberBalance[], fundHolderId: bigint | null = null): SuggestedTransfer[] {
+  const holder = fundHolderId === null ? undefined : balances.find((b) => b.adminUserId === fundHolderId);
+  if (holder) {
+    return balances
+      .filter((balance) => balance !== holder && balance.pendingCents !== 0)
+      .sort((a, b) => Math.sign(a.pendingCents) - Math.sign(b.pendingCents) || Math.abs(b.pendingCents) - Math.abs(a.pendingCents))
+      .map((balance) => {
+        const owes = balance.pendingCents < 0;
+        const [from, to] = owes ? [balance, holder] : [holder, balance];
+        return {
+          fromAdminUserId: from.adminUserId,
+          fromName: from.name,
+          toAdminUserId: to.adminUserId,
+          toName: to.name,
+          amountCents: Math.abs(balance.pendingCents),
+        };
+      });
+  }
   const fromExpenses = owedFromMoney;
   const byId = (a: MemberBalance, b: MemberBalance) =>
     a.adminUserId < b.adminUserId ? -1 : a.adminUserId > b.adminUserId ? 1 : 0;
@@ -100,8 +121,13 @@ export function suggestTransfers(balances: MemberBalance[]): SuggestedTransfer[]
 
 // The most one person can repay another in a group: what's left on their row.
 // Anything else would change who the others pay.
-export function maxRepaymentCents(balances: MemberBalance[], fromId: bigint, toId: bigint) {
-  const row = suggestTransfers(balances).find(
+export function maxRepaymentCents(
+  balances: MemberBalance[],
+  fromId: bigint,
+  toId: bigint,
+  fundHolderId: bigint | null = null,
+) {
+  const row = suggestTransfers(balances, fundHolderId).find(
     (transfer) => transfer.fromAdminUserId === fromId && transfer.toAdminUserId === toId,
   );
   return row?.amountCents ?? 0;
@@ -176,5 +202,7 @@ export function summarizeGroup(
   }
   // Biggest creditors first, then those who are square, then debtors.
   balances.sort((a, b) => b.pendingCents - a.pendingCents || a.name.localeCompare(b.name));
-  return { balances, totalCents, expenseCount: expenses.length };
+  // Whoever keeps the fund, when it's in the balances: everyone settles with them.
+  const fundHolderId = fund && fund.split.length > 0 ? fund.holder.id : null;
+  return { balances, totalCents, expenseCount: expenses.length, fundHolderId };
 }

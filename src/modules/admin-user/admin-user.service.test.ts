@@ -4,8 +4,10 @@ import {
   assertMayChangeAccount,
   isMoneyHubPerson,
   memberMayManage,
+  mergeBlocker,
   planExistingAccount,
   welcomeEmailBlocker,
+  withNameHints,
 } from "./admin-user.service";
 
 const member = { id: 5n, hasExpensesAccess: true, hasSavingsAccess: false };
@@ -127,4 +129,59 @@ test("Money Hub access, a guest, or being listed on purpose makes someone a Mone
 
 test("someone with money records stays visible after losing access", () => {
   assert.equal(isMoneyHubPerson({ ...noOne, linkedRecords: 3 }), true);
+});
+
+test("pickers tell apart people with the same name, without naming anyone hidden", () => {
+  const me = 5n;
+  const rows = [
+    { id: 5n, name: "Asha", email: null, createdByAdminUserId: 1n },
+    { id: 7n, name: "Ravi", email: null, createdByAdminUserId: 1n },
+    { id: 10n, name: "Giri", email: null, createdByAdminUserId: me },
+    { id: 11n, name: "giri ", email: null, createdByAdminUserId: 7n },
+    { id: 12n, name: "Giri", email: null, createdByAdminUserId: 99n },
+    { id: 13n, name: "Priya", email: null, createdByAdminUserId: 7n },
+  ];
+  const hints = Object.fromEntries(withNameHints(rows, me).map((row) => [String(row.id), row.hint]));
+  assert.deepEqual(hints, {
+    "5": null,
+    "7": null,
+    "10": "added by you",
+    "11": "added by Ravi",
+    "12": "#12",
+    "13": null,
+  });
+  const twins = withNameHints(
+    [
+      { id: 20n, name: "Giri", email: null, createdByAdminUserId: 7n },
+      { id: 21n, name: "Giri", email: null, createdByAdminUserId: 7n },
+      { id: 7n, name: "Ravi", email: null, createdByAdminUserId: null },
+    ],
+    me,
+  );
+  assert.deepEqual(
+    twins.map((row) => row.hint),
+    ["added by Ravi · #20", "added by Ravi · #21", null],
+  );
+  assert.ok(twins.every((row) => !("createdByAdminUserId" in row)));
+});
+
+test("only the owner merges, and only a guest goes away", () => {
+  const guest = {
+    id: 10n,
+    isOwner: false,
+    isSuperAdmin: false,
+    isActive: true,
+    passwordHash: null,
+    hasPortfolioAccess: false,
+  };
+  const keep = { ...guest, id: 11n, passwordHash: "hash" };
+  const owner = { isOwner: true };
+  assert.equal(mergeBlocker(guest, keep, owner, false, false), null);
+  assert.match(mergeBlocker(guest, keep, { isOwner: false }, false, false)!, /Only the owner/);
+  assert.match(mergeBlocker(guest, guest, owner, false, false)!, /someone else/);
+  assert.match(mergeBlocker({ ...guest, passwordHash: "hash" }, keep, owner, false, false)!, /Only a guest/);
+  assert.match(mergeBlocker(guest, keep, owner, true, false)!, /Only a guest/);
+  assert.match(mergeBlocker({ ...guest, isSuperAdmin: true }, keep, owner, false, false)!, /super admins/);
+  assert.match(mergeBlocker(guest, { ...keep, isActive: false }, owner, false, false)!, /Reactivate/);
+  assert.match(mergeBlocker(guest, keep, owner, false, true)!, /repayments/);
 });

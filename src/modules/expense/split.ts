@@ -6,13 +6,14 @@ export interface SplitShare {
   shareAmount: string;
 }
 
-// The payer is always one of the people splitting, and listed first (the
-// first few people absorb any leftover paise). A "split" with nobody else in
-// it is no split at all.
+// The people sharing an expense equally, nobody twice. The payer is listed
+// first when they're sharing it (the first few people absorb any leftover
+// paise), and may be left out, for an expense they covered for the others.
+// A "split" with nobody but the payer in it is no split at all.
 export function normalizeSplit(adminUserIds: bigint[], payerId: bigint): bigint[] {
-  if (adminUserIds.length === 0) return [];
-  const ids = [...new Set([payerId, ...adminUserIds])];
-  return ids.length < 2 ? [] : ids;
+  const unique = [...new Set(adminUserIds)];
+  const ids = unique.includes(payerId) ? [payerId, ...unique.filter((id) => id !== payerId)] : unique;
+  return ids.length === 0 || (ids.length === 1 && ids[0] === payerId) ? [] : ids;
 }
 
 // Splits `amount` (a decimal string) equally across `adminUserIds`, in

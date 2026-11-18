@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAccountManager, requireAdminAuth, requireAnyExpenseAccess } from "../../middleware/auth";
+import { requireAccountManager, requireAdminAuth, requireAnyExpenseAccess, requireSuperAdmin } from "../../middleware/auth";
 import {
   createAdminUserHandler,
   deleteAdminUserHandler,
   listAdminUsersHandler,
   listExpenseMembersHandler,
+  mergeAdminUserHandler,
   sendWelcomeEmailHandler,
   updateAdminUserHandler,
 } from "./admin-user.controller";
@@ -23,6 +24,8 @@ adminUserAdminRouter.post(
   requireAccountManager,
   asyncHandler(sendWelcomeEmailHandler),
 );
+// Owner only (the service refuses anyone else): /:id is the duplicate that goes.
+adminUserAdminRouter.post("/:id/merge", requireAdminAuth, requireSuperAdmin, asyncHandler(mergeAdminUserHandler));
 
 // Any expense-module member (not super-admin-only): a minimal id/email/name list
 // used to populate "who" pickers (savings account holder, expense split

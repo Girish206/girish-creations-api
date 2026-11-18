@@ -4,6 +4,8 @@ import { env } from "../../config/env";
 import { EmailError, isEmailEnabled, sendEmail } from "../../lib/email";
 import { prisma } from "../../lib/prisma";
 import { BadRequestError, ConflictError, ForbiddenError, HttpError, NotFoundError } from "../../utils/httpError";
+import { toCents } from "../../utils/money";
+import { displayName, logActivity, namesOf } from "../activity/activity.service";
 import { maskEmail } from "../auth/auth-code";
 import { connectedPeopleIds } from "./connected-people";
 import { buildWelcomeEmail } from "./welcome-email";
@@ -234,16 +236,58 @@ export async function listExpenseMembers(actor: Pick<ActingAdmin, "id" | "isSupe
     select: { id: true, email: true, name: true, createdByAdminUserId: true },
     orderBy: { createdAt: "asc" },
   });
-  if (actor.isSuperAdmin) {
-    return rows.map(({ createdByAdminUserId: _addedBy, ...row }) => row);
-  }
+  if (actor.isSuperAdmin) return withNameHints(rows, actor.id);
   const connected = await connectedPeopleIds(actor.id);
-  return rows
+  const visible = rows
     .filter((row) => connected.has(row.id))
-    .map(({ createdByAdminUserId, ...row }) => {
-      if (row.id === actor.id || createdByAdminUserId === actor.id) return row;
-      return { ...row, email: null, name: row.name ?? (row.email ? maskEmail(row.email) : null) };
+    .map((row) => {
+      if (row.id === actor.id || row.createdByAdminUserId === actor.id) return row;
+      return {
+        ...row,
+        email: null,
+        name: row.name ?? (row.email ? maskEmail(row.email) : null),
+      };
     });
+  return withNameHints(visible, actor.id);
+}
+
+type PickerRow = {
+  id: bigint;
+  email: string | null;
+  name: string | null;
+  createdByAdminUserId: bigint | null;
+};
+
+// People a picker would show the same way ("Giri" and "Giri", added by two
+// different members) get a hint saying who added each. The adder is named only
+// when they're in the list already, so it shows no one the viewer can't see;
+// otherwise, or if that still doesn't tell them apart, a number does.
+export function withNameHints(rows: PickerRow[], viewerId: bigint) {
+  const names = new Map(rows.map((row) => [row.id, row.name || row.email]));
+  const shownAs = (row: PickerRow) => (row.name || row.email || "").trim().toLowerCase();
+  const tally = (keys: string[]) => {
+    const counts = new Map<string, number>();
+    keys.forEach((key) => counts.set(key, (counts.get(key) ?? 0) + 1));
+    return counts;
+  };
+
+  const nameCounts = tally(rows.map(shownAs));
+  const hints = rows.map((row) => {
+    if (nameCounts.get(shownAs(row))! < 2) return null;
+    // The pickers already mark the viewer "(you)".
+    if (row.id === viewerId) return null;
+    if (row.createdByAdminUserId === viewerId) return "added by you";
+    const adder = row.createdByAdminUserId !== null ? names.get(row.createdByAdminUserId) : null;
+    return adder ? `added by ${adder}` : `#${row.id}`;
+  });
+  // Two "Giri"s both added by Ravi: a number tells them apart.
+  const hintCounts = tally(rows.map((row, i) => `${shownAs(row)}|${hints[i]}`));
+
+  return rows.map(({ createdByAdminUserId: _addedBy, ...row }, i) => {
+    const hint = hints[i];
+    const clash = hint !== null && hintCounts.get(`${shownAs(rows[i])}|${hint}`)! > 1;
+    return { ...row, hint: clash ? `${hint} · #${row.id}` : hint };
+  });
 }
 
 // Mobile numbers are unique across accounts (checked here — see schema).
@@ -525,5 +569,177 @@ export async function deleteAdminUser(id: bigint, actor: ActingAdmin, permanent 
   await prisma.adminUser.update({
     where: { id },
     data: { isActive: false, sessionVersion: nextSessionVersion(existing) },
+  });
+}
+
+type MergeSide = Pick<
+  AdminUser,
+  "id" | "isOwner" | "isSuperAdmin" | "isActive" | "passwordHash" | "hasPortfolioAccess"
+>;
+
+// Why `source` can't be folded into `target`, or null if it can. Only the
+// owner merges, and only a guest goes away: someone who signs in would lose
+// their login, and their portfolio has nowhere to go.
+export function mergeBlocker(
+  source: MergeSide,
+  target: MergeSide,
+  actor: Pick<ActingAdmin, "isOwner">,
+  hasPortfolio: boolean,
+  repaidEachOther: boolean,
+) {
+  if (!actor.isOwner) return "Only the owner can merge people";
+  if (source.id === target.id) return "Pick someone else to merge into";
+  if (source.isOwner || source.isSuperAdmin) return "The owner and super admins can't be merged into someone else";
+  if (source.passwordHash !== null || source.hasPortfolioAccess || hasPortfolio) {
+    return "Only a guest can be merged into someone else. Take away their login first";
+  }
+  if (!target.isActive) return "Reactivate the person you're merging into first";
+  if (repaidEachOther)
+    return "These two have repayments between them. Remove those first, since one person can't repay themselves";
+  return null;
+}
+
+const mergeSelect = {
+  id: true,
+  isOwner: true,
+  isSuperAdmin: true,
+  isActive: true,
+  passwordHash: true,
+  hasPortfolioAccess: true,
+  email: true,
+  mobile: true,
+  name: true,
+  listedInAdmin: true,
+} as const;
+
+// Folds a duplicate (two "Giri"s that are the same person) into the one to
+// keep: everything pointing at the duplicate moves over, then it's deleted.
+// Where both were on the same split, their shares are added together; where
+// both were in the same group or goal, they're in it once. All or nothing.
+export async function mergeAdminUser(sourceId: bigint, targetId: bigint, actor: ActingAdmin) {
+  const [source, target] = await Promise.all([
+    prisma.adminUser.findUnique({
+      where: { id: sourceId },
+      select: mergeSelect,
+    }),
+    prisma.adminUser.findUnique({
+      where: { id: targetId },
+      select: mergeSelect,
+    }),
+  ]);
+  if (!source || !target) throw NotFoundError("Admin user not found");
+  const [profiles, repayments] = await Promise.all([
+    prisma.userProfile.count({ where: { adminUserId: sourceId } }),
+    prisma.expenseGroupSettlement.count({
+      where: {
+        OR: [
+          { fromAdminUserId: sourceId, toAdminUserId: targetId },
+          { fromAdminUserId: targetId, toAdminUserId: sourceId },
+        ],
+      },
+    }),
+  ]);
+  const blocker = mergeBlocker(source, target, actor, profiles > 0, repayments > 0);
+  if (blocker) throw BadRequestError(blocker);
+
+  const moveTo = (field: string) => ({
+    where: { [field]: sourceId },
+    data: { [field]: targetId },
+  });
+
+  await prisma.$transaction(
+    async (tx) => {
+      // Rows with a one-per-person rule: drop the duplicate's where the
+      // target is already there, otherwise hand it over.
+      const groupRows = await tx.expenseGroupMember.findMany({
+        where: { adminUserId: { in: [sourceId, targetId] } },
+      });
+      for (const row of groupRows.filter((r) => r.adminUserId === sourceId)) {
+        const both = groupRows.some((r) => r.adminUserId === targetId && r.expenseGroupId === row.expenseGroupId);
+        if (both) await tx.expenseGroupMember.delete({ where: { id: row.id } });
+        else
+          await tx.expenseGroupMember.update({
+            where: { id: row.id },
+            data: { adminUserId: targetId },
+          });
+      }
+
+      const goalRows = await tx.savingsGoalMember.findMany({
+        where: { adminUserId: { in: [sourceId, targetId] } },
+      });
+      for (const row of goalRows.filter((r) => r.adminUserId === sourceId)) {
+        const both = goalRows.some((r) => r.adminUserId === targetId && r.savingsGoalId === row.savingsGoalId);
+        if (both) await tx.savingsGoalMember.delete({ where: { id: row.id } });
+        else
+          await tx.savingsGoalMember.update({
+            where: { id: row.id },
+            data: { adminUserId: targetId },
+          });
+      }
+
+      const shares = await tx.expenseSplitParticipant.findMany({
+        where: { adminUserId: { in: [sourceId, targetId] } },
+      });
+      for (const row of shares.filter((r) => r.adminUserId === sourceId)) {
+        const kept = shares.find((r) => r.adminUserId === targetId && r.expenseId === row.expenseId);
+        if (kept) {
+          const total = (toCents(kept.shareAmount) + toCents(row.shareAmount)) / 100;
+          await tx.expenseSplitParticipant.delete({ where: { id: row.id } });
+          await tx.expenseSplitParticipant.update({
+            where: { id: kept.id },
+            data: { shareAmount: total.toFixed(2) },
+          });
+        } else {
+          await tx.expenseSplitParticipant.update({
+            where: { id: row.id },
+            data: { adminUserId: targetId },
+          });
+        }
+      }
+
+      // Plain references.
+      await tx.expense.updateMany(moveTo("paidByAdminUserId"));
+      await tx.expense.updateMany(moveTo("createdByAdminUserId"));
+      await tx.expenseGroup.updateMany(moveTo("createdByAdminUserId"));
+      await tx.expenseGroupSettlement.updateMany(moveTo("fromAdminUserId"));
+      await tx.expenseGroupSettlement.updateMany(moveTo("toAdminUserId"));
+      await tx.savingsGoal.updateMany(moveTo("accountHolderAdminUserId"));
+      await tx.savingsGoal.updateMany(moveTo("createdByAdminUserId"));
+      await tx.savingsContribution.updateMany(moveTo("contributedByAdminUserId"));
+      await tx.adminUser.updateMany(moveTo("createdByAdminUserId"));
+      await tx.activityLog.updateMany(moveTo("actorAdminUserId"));
+      const logs = await tx.activityLog.findMany({
+        where: { involvedAdminUserIds: { has: sourceId } },
+        select: { id: true, involvedAdminUserIds: true },
+      });
+      for (const log of logs) {
+        const involved = [...new Set(log.involvedAdminUserIds.map((id) => (id === sourceId ? targetId : id)))];
+        await tx.activityLog.update({
+          where: { id: log.id },
+          data: { involvedAdminUserIds: involved },
+        });
+      }
+
+      // Deleted before the target takes its email or mobile, which are unique.
+      await tx.adminUser.delete({ where: { id: sourceId } });
+      await tx.adminUser.update({
+        where: { id: targetId },
+        data: {
+          name: target.name ?? source.name,
+          email: target.email ?? source.email,
+          mobile: target.mobile ?? source.mobile,
+          listedInAdmin: target.listedInAdmin || source.listedInAdmin || undefined,
+        },
+      });
+    },
+    { timeout: 30_000, maxWait: 10_000 },
+  );
+
+  const nameOf = await namesOf([actor.id]);
+  await logActivity({
+    actorId: actor.id,
+    action: "person.merged",
+    summary: `${nameOf(actor.id)} merged ${displayName(source)} into ${displayName(target)}`,
+    involved: [targetId],
   });
 }

@@ -480,7 +480,7 @@ export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
   }
 
   const sentBy = sender.name?.trim() || (sender.email ? maskEmail(sender.email) : "Someone");
-  const emailGroup = { id, name: group.name, ...summary, transfers: suggestTransfers(summary.balances) };
+  const emailGroup = { id, name: group.name, ...summary, transfers: suggestTransfers(summary.balances, summary.fundHolderId) };
   const results = await Promise.allSettled(
     recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.adminSignInUrl))),
   );
@@ -531,8 +531,8 @@ export async function addSettlement(groupId: bigint, input: SettlementInput, adm
   }
   await assertAdminUsersExist([input.fromAdminUserId, input.toAdminUserId]);
   const loaded = await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations });
-  const { balances } = summaryOf(loaded);
-  const maxCents = maxRepaymentCents(balances, input.fromAdminUserId, input.toAdminUserId);
+  const { balances, fundHolderId } = summaryOf(loaded);
+  const maxCents = maxRepaymentCents(balances, input.fromAdminUserId, input.toAdminUserId, fundHolderId);
   if (maxCents === 0) {
     throw BadRequestError("Nothing is owed between these two people");
   }
