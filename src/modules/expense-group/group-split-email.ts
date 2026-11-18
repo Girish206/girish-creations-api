@@ -107,8 +107,10 @@ export function buildSplitEmail(
   const people = group.balances.map((balance) => ({
     isRecipient: balance.adminUserId === recipient.id,
     name: safeName(balance.name),
-    paid: formatCents(balance.paidCents),
-    share: formatCents(balance.shareCents),
+    // A trip paid from a shared fund counts what went into the fund as paid,
+    // and each person's part of the fund's spending as their share.
+    paid: formatCents(balance.paidCents + balance.fundPutInCents),
+    share: formatCents(balance.shareCents + balance.fundShareCents),
     balance: balanceText(balance.pendingCents),
   }));
   const payments = group.transfers.map((transfer) => ({

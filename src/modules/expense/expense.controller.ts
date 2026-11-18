@@ -48,6 +48,18 @@ export async function deleteExpenseHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
+const disputeSchema = z.object({
+  disputed: z.boolean(),
+  note: z.string().trim().max(300).nullable().optional(),
+});
+
+export async function setExpenseDisputeHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { disputed, note } = disputeSchema.parse(req.body);
+  const updated = await expenseService.setExpenseDispute(id, disputed, note, requestingAdmin(req));
+  res.json({ data: updated });
+}
+
 export async function getDirectBalancesHandler(req: Request, res: Response) {
   const balances = await expenseService.getDirectBalances(requestingAdmin(req));
   res.json({ data: balances });

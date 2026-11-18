@@ -6,8 +6,11 @@ import { BadRequestError, ConflictError, ForbiddenError, HttpError, NotFoundErro
 import { maskEmail } from "../auth/auth-code";
 import { assertAdminUsersExist } from "../admin-user/assert-admin-users-exist";
 import { assertCanPick } from "../admin-user/connected-people";
-import { maxRepaymentCents, suggestTransfers, summarizeGroup } from "./group-balances";
+import { maxRepaymentCents, suggestTransfers, summarizeGroup, type GroupFund } from "./group-balances";
+import { computeFundSplit, fundPeople } from "../savings-goal/fund-split";
 import { buildSplitEmail, splitEmailAudience } from "./group-split-email";
+import { logActivity, namesOf } from "../activity/activity.service";
+import { recordRepayment } from "../activity/repayments";
 
 const userSelect = { select: { id: true, email: true, name: true } } as const;
 
@@ -23,15 +26,59 @@ const includeRelations = {
     select: {
       amount: true,
       paidBy: userSelect,
+      savingsGoal: { select: { kind: true } },
       splitParticipants: { select: { shareAmount: true, adminUser: userSelect } },
+    },
+  },
+  // The shared fund this trip is paid from, if any: read whole so its money
+  // settles together with the trip's own expenses.
+  fundGoal: {
+    select: {
+      id: true,
+      name: true,
+      closedAt: true,
+      accountHolderAdminUserId: true,
+      accountHolder: userSelect,
+      createdBy: userSelect,
+      members: { select: { adminUser: userSelect } },
+      contributions: { select: { amount: true, contributedBy: userSelect } },
+      expenses: {
+        select: { amount: true, splitParticipants: { select: { shareAmount: true, adminUser: userSelect } } },
+      },
     },
   },
 } as const;
 
 type LoadedGroup = Prisma.ExpenseGroupGetPayload<{ include: typeof includeRelations }>;
 
-function present({ expenses, ...group }: LoadedGroup) {
-  return { ...group, ...summarizeGroup(expenses, group.settlements) };
+// The linked fund's split, and who keeps its money (the account holder, else
+// whoever made it).
+function fundOf(group: LoadedGroup): GroupFund | null {
+  const fund = group.fundGoal;
+  const holder = fund?.accountHolder ?? fund?.createdBy;
+  if (!fund || !holder) return null;
+  return { holder, split: computeFundSplit(fundPeople(fund), fund.contributions, fund.expenses) };
+}
+
+function summaryOf(group: LoadedGroup) {
+  return summarizeGroup(group.expenses, group.settlements, fundOf(group));
+}
+
+function present(loaded: LoadedGroup) {
+  const summary = summaryOf(loaded);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { expenses, fundGoal, ...group } = loaded;
+  const fund = fundGoal
+    ? {
+        id: fundGoal.id,
+        name: fundGoal.name,
+        closedAt: fundGoal.closedAt,
+        holderAdminUserId: (fundGoal.accountHolder ?? fundGoal.createdBy)?.id ?? null,
+        putInCents: summary.balances.reduce((sum, b) => sum + b.fundPutInCents, 0),
+        spentCents: summary.balances.reduce((sum, b) => sum + b.fundShareCents, 0),
+      }
+    : null;
+  return { ...group, fund, ...summary };
 }
 
 export interface RequestingAdmin {
@@ -143,9 +190,17 @@ export async function createExpenseGroup(input: ExpenseGroupInput, creator: Requ
       name: input.name,
       startDate: input.startDate ? new Date(input.startDate) : null,
       endDate: input.endDate ? new Date(input.endDate) : null,
+      createdByAdminUserId: creator.id,
     },
   });
   await replaceMembers(created.id, memberIds);
+  await logActivity({
+    actorId: creator.id,
+    action: "group.created",
+    summary: `Created ${input.name}`,
+    involved: memberIds,
+    expenseGroupId: created.id,
+  });
   return present(await prisma.expenseGroup.findUniqueOrThrow({ where: { id: created.id }, include: includeRelations }));
 }
 
@@ -158,10 +213,57 @@ async function findGroupOrThrow(id: bigint, admin: RequestingAdmin) {
   return existing;
 }
 
+// Adding people to a group and emailing its split-up is for the people in it.
+// Someone who only logged an expense in it can see it, not change it. An older
+// group with no people recorded stays open to those who can see it.
+export function mayManageGroup(memberIds: bigint[], admin: RequestingAdmin) {
+  return admin.isSuperAdmin || memberIds.length === 0 || memberIds.includes(admin.id);
+}
+
+// Renaming it, changing its dates, taking people out, closing, reopening and
+// deleting it is for whoever created it, so one person can't undo a settled
+// trip for everyone. A group with no known creator in it (an older one, or
+// one a super admin made for others) leaves that to its people.
+export function mayRunGroup(
+  group: { createdByAdminUserId: bigint | null },
+  memberIds: bigint[],
+  admin: RequestingAdmin,
+) {
+  if (admin.isSuperAdmin) return true;
+  const creator = group.createdByAdminUserId;
+  if (creator !== null && memberIds.includes(creator)) return creator === admin.id;
+  return mayManageGroup(memberIds, admin);
+}
+
+async function memberIdsOf(id: bigint) {
+  const members = await prisma.expenseGroupMember.findMany({
+    where: { expenseGroupId: id },
+    select: { adminUserId: true },
+  });
+  return members.map((member) => member.adminUserId);
+}
+
+async function findManageableGroupOrThrow(id: bigint, admin: RequestingAdmin) {
+  const existing = await findGroupOrThrow(id, admin);
+  const memberIds = await memberIdsOf(id);
+  if (!mayManageGroup(memberIds, admin)) {
+    throw ForbiddenError("Only the people in this group can change it");
+  }
+  return { existing, memberIds };
+}
+
+async function findRunnableGroupOrThrow(id: bigint, admin: RequestingAdmin) {
+  const found = await findManageableGroupOrThrow(id, admin);
+  if (!mayRunGroup(found.existing, found.memberIds, admin)) {
+    throw ForbiddenError("Only the person who created this group can do this");
+  }
+  return found;
+}
+
 // People with money recorded against a group can't be taken out of it —
 // their paid amounts, shares or repayments would still count in its balances.
 async function assertNotRemovingInvolvedPeople(id: bigint, memberIds: bigint[]) {
-  const [payer, sharer, settlement] = await Promise.all([
+  const [payer, sharer, settlement, logger] = await Promise.all([
     prisma.expense.findFirst({
       where: { expenseGroupId: id, paidByAdminUserId: { notIn: memberIds } },
       select: { paidBy: { select: { name: true, email: true } } },
@@ -177,6 +279,12 @@ async function assertNotRemovingInvolvedPeople(id: bigint, memberIds: bigint[]) 
       },
       select: { id: true },
     }),
+    // Whoever logged an expense keeps seeing it, so they stay in the group too:
+    // taking someone out of a group always takes it away from them.
+    prisma.expense.findFirst({
+      where: { expenseGroupId: id, createdByAdminUserId: { notIn: memberIds, not: null } },
+      select: { createdBy: { select: { name: true, email: true } } },
+    }),
   ]);
   if (payer) {
     const who = payer.paidBy.name || payer.paidBy.email || "Someone";
@@ -189,6 +297,10 @@ async function assertNotRemovingInvolvedPeople(id: bigint, memberIds: bigint[]) 
   if (settlement) {
     throw BadRequestError("Someone being removed has a recorded repayment in this group — remove it first");
   }
+  if (logger?.createdBy) {
+    const who = logger.createdBy.name || logger.createdBy.email || "Someone";
+    throw BadRequestError(`${who} logged an expense in this group, so they can't be removed from it`);
+  }
 }
 
 // Everyone on a group already: its members, plus anyone with money in it (an
@@ -197,15 +309,31 @@ async function peopleInGroup(id: bigint) {
   const group = await prisma.expenseGroup.findUniqueOrThrow({ where: { id }, include: includeRelations });
   return [
     ...group.members.map((member) => member.adminUserId),
-    ...summarizeGroup(group.expenses, group.settlements).balances.map((balance) => balance.adminUserId),
+    ...summaryOf(group).balances.map((balance) => balance.adminUserId),
   ];
 }
 
 export async function updateExpenseGroup(id: bigint, input: Partial<ExpenseGroupInput>, admin: RequestingAdmin) {
-  const existing = await findGroupOrThrow(id, admin);
+  const { existing, memberIds: currentIds } = await findManageableGroupOrThrow(id, admin);
   const startDate = input.startDate !== undefined ? input.startDate : existing.startDate && dayOf(existing.startDate);
   const endDate = input.endDate !== undefined ? input.endDate : existing.endDate && dayOf(existing.endDate);
   assertValidRange(startDate, endDate);
+
+  const day = (value: string | null | undefined) => (value ? value.slice(0, 10) : null);
+  const renamed = input.name !== undefined && input.name !== existing.name;
+  const datesChanged =
+    day(startDate) !== day(existing.startDate && dayOf(existing.startDate)) ||
+    day(endDate) !== day(existing.endDate && dayOf(existing.endDate));
+  const nextIds = input.memberAdminUserIds !== undefined ? unique(input.memberAdminUserIds) : currentIds;
+  const removedIds = currentIds.filter((memberId) => !nextIds.includes(memberId));
+  const addedIds = nextIds.filter((memberId) => !currentIds.includes(memberId));
+  if ((renamed || datesChanged || removedIds.length > 0) && !mayRunGroup(existing, currentIds, admin)) {
+    throw ForbiddenError("Only the person who created this group can rename it, change its dates or take people out");
+  }
+  const creator = existing.createdByAdminUserId;
+  if (creator !== null && removedIds.includes(creator)) {
+    throw BadRequestError("Whoever created the group stays in it");
+  }
 
   // Narrowing the window mustn't strand expenses already logged outside it.
   if (startDate || endDate) {
@@ -236,32 +364,56 @@ export async function updateExpenseGroup(id: bigint, input: Partial<ExpenseGroup
     await replaceMembers(id, memberIds);
   }
 
-  return present(
-    await prisma.expenseGroup.update({
-      where: { id },
-      data: {
-        name: input.name,
-        startDate: input.startDate !== undefined ? (input.startDate ? new Date(input.startDate) : null) : undefined,
-        endDate: input.endDate !== undefined ? (input.endDate ? new Date(input.endDate) : null) : undefined,
-      },
-      include: includeRelations,
-    }),
-  );
+  const updated = await prisma.expenseGroup.update({
+    where: { id },
+    data: {
+      name: input.name,
+      startDate: input.startDate !== undefined ? (input.startDate ? new Date(input.startDate) : null) : undefined,
+      endDate: input.endDate !== undefined ? (input.endDate ? new Date(input.endDate) : null) : undefined,
+    },
+    include: includeRelations,
+  });
+
+  const name = await namesOf([...addedIds, ...removedIds]);
+  const changes = [
+    ...(renamed ? [`renamed it from ${existing.name}`] : []),
+    ...(datesChanged ? ["changed its dates"] : []),
+    ...(addedIds.length ? [`added ${addedIds.map(name).join(", ")}`] : []),
+    ...(removedIds.length ? [`took out ${removedIds.map(name).join(", ")}`] : []),
+  ];
+  if (changes.length > 0) {
+    await logActivity({
+      actorId: admin.id,
+      action: "group.updated",
+      summary: `${updated.name}: ${changes.join(", ")}`,
+      involved: [...currentIds, ...nextIds],
+      expenseGroupId: id,
+    });
+  }
+  return present(updated);
 }
 
 export async function setExpenseGroupClosed(id: bigint, closed: boolean, admin: RequestingAdmin) {
-  await findGroupOrThrow(id, admin);
-  return present(
-    await prisma.expenseGroup.update({
-      where: { id },
-      data: { closedAt: closed ? new Date() : null },
-      include: includeRelations,
-    }),
-  );
+  const { existing } = await findRunnableGroupOrThrow(id, admin);
+  const updated = await prisma.expenseGroup.update({
+    where: { id },
+    data: { closedAt: closed ? new Date() : null },
+    include: includeRelations,
+  });
+  if (Boolean(existing.closedAt) !== closed) {
+    await logActivity({
+      actorId: admin.id,
+      action: closed ? "group.closed" : "group.reopened",
+      summary: `${closed ? "Closed" : "Reopened"} ${updated.name}`,
+      involved: await peopleInGroup(id),
+      expenseGroupId: id,
+    });
+  }
+  return present(updated);
 }
 
 export async function deleteExpenseGroup(id: bigint, admin: RequestingAdmin) {
-  await findGroupOrThrow(id, admin);
+  const { existing, memberIds } = await findRunnableGroupOrThrow(id, admin);
   // Only an empty group can be deleted — counted across everyone's
   // expenses, not just the requester's visible ones, so a group can't be
   // removed out from under someone else's private expenses.
@@ -274,6 +426,13 @@ export async function deleteExpenseGroup(id: bigint, admin: RequestingAdmin) {
   await prisma.expenseGroupSettlement.deleteMany({ where: { expenseGroupId: id } });
   await prisma.expenseGroupMember.deleteMany({ where: { expenseGroupId: id } });
   await prisma.expenseGroup.delete({ where: { id } });
+  await logActivity({
+    actorId: admin.id,
+    action: "group.deleted",
+    summary: `Deleted ${existing.name}`,
+    involved: memberIds,
+    expenseGroupId: id,
+  });
 }
 
 // Stops a double click, or someone repeatedly mailing the whole group.
@@ -294,9 +453,9 @@ export function splitEmailBlocker(
 // Emails everyone in the group the split-up, when someone settling up chooses
 // to. Each email is separate, so no one sees anyone else's address.
 export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
-  await findGroupOrThrow(id, admin);
+  await findManageableGroupOrThrow(id, admin);
   const group = await prisma.expenseGroup.findUniqueOrThrow({ where: { id }, include: includeRelations });
-  const summary = summarizeGroup(group.expenses, group.settlements);
+  const summary = summaryOf(group);
   const blocker = splitEmailBlocker({ expenseCount: summary.expenseCount, splitEmailSentAt: group.splitEmailSentAt });
   if (blocker) throw BadRequestError(blocker);
   if (!isEmailEnabled()) {
@@ -336,6 +495,13 @@ export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
   }
 
   await prisma.expenseGroup.update({ where: { id }, data: { splitEmailSentAt: new Date() } });
+  await logActivity({
+    actorId: admin.id,
+    action: "group.split-emailed",
+    summary: `Emailed the split-up for ${group.name}`,
+    involved: peopleIds,
+    expenseGroupId: id,
+  });
   return { sent, failed: failed.length, noEmail };
 }
 
@@ -365,7 +531,7 @@ export async function addSettlement(groupId: bigint, input: SettlementInput, adm
   }
   await assertAdminUsersExist([input.fromAdminUserId, input.toAdminUserId]);
   const loaded = await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations });
-  const { balances } = summarizeGroup(loaded.expenses, loaded.settlements);
+  const { balances } = summaryOf(loaded);
   const maxCents = maxRepaymentCents(balances, input.fromAdminUserId, input.toAdminUserId);
   if (maxCents === 0) {
     throw BadRequestError("Nothing is owed between these two people");
@@ -382,6 +548,7 @@ export async function addSettlement(groupId: bigint, input: SettlementInput, adm
       toAdminUserId: input.toAdminUserId,
     },
   });
+  await recordRepayment("added", input, admin, group);
   return present(await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations }));
 }
 
@@ -398,4 +565,5 @@ export async function deleteSettlement(groupId: bigint, settlementId: bigint, ad
     throw BadRequestError("This group is closed — reopen it to change settlements");
   }
   await prisma.expenseGroupSettlement.delete({ where: { id: settlementId } });
+  await recordRepayment("removed", existing, admin, group);
 }

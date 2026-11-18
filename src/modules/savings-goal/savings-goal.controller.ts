@@ -23,6 +23,7 @@ const goalSchema = z.object({
   // Who else can see/use this goal — omitted/empty keeps it private to its
   // creator and account holder.
   memberAdminUserIds: z.array(z.coerce.bigint()).optional(),
+  kind: z.enum(["savings", "fund"]).optional(),
 });
 
 export async function createSavingsGoalHandler(req: Request, res: Response) {

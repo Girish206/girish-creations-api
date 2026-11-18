@@ -6,6 +6,7 @@ import {
   createExpenseCategoryHandler,
   deleteExpenseCategoryHandler,
   listExpenseCategoriesHandler,
+  mergeExpenseCategoryHandler,
   updateExpenseCategoryHandler,
 } from "./expense-category.controller";
 
@@ -41,4 +42,12 @@ expenseCategoryAdminRouter.delete(
   requireExpenseAccess,
   requireSuperAdmin,
   asyncHandler(deleteExpenseCategoryHandler),
+);
+// Tidying duplicates: one category's expenses move into another, then it goes.
+expenseCategoryAdminRouter.post(
+  "/:id/merge",
+  requireAdminAuth,
+  requireExpenseAccess,
+  requireSuperAdmin,
+  asyncHandler(mergeExpenseCategoryHandler),
 );

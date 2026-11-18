@@ -15,6 +15,7 @@
     "seed:categories": "tsx prisma/seed-expense-categories.ts",
     "migrate:link-profiles": "tsx prisma/link-profiles.ts",
     "migrate:dedupe-profiles": "tsx prisma/dedupe-profiles.ts",
+    "migrate:link-fund-groups": "tsx prisma/link-fund-groups.ts",
     "compress:files": "tsx prisma/compress-files.ts"
   },
   "keywords": [],

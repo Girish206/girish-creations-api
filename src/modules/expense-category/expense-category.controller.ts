@@ -43,3 +43,12 @@ export async function deleteExpenseCategoryHandler(req: Request, res: Response) 
   await expenseCategoryService.deleteExpenseCategory(id);
   res.status(204).send();
 }
+
+const mergeSchema = z.object({ intoCategoryId: z.coerce.bigint() });
+
+export async function mergeExpenseCategoryHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { intoCategoryId } = mergeSchema.parse(req.body);
+  const result = await expenseCategoryService.mergeExpenseCategory(id, intoCategoryId);
+  res.json({ data: result });
+}

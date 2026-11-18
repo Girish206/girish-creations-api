@@ -289,11 +289,22 @@ model ExpenseGroup {
   createdAt DateTime  @default(now()) @map("created_at")
   // Last time someone emailed the group its split-up from the settle-up screen.
   splitEmailSentAt DateTime? @map("split_email_sent_at")
+  // Who made it: they rename it, change its dates, take people out, close,
+  // reopen or delete it (members can add people). Null on older groups, and
+  // when a super admin makes a group they aren't in — then any member can.
+  createdByAdminUserId BigInt? @map("created_by_admin_user_id")
+
+  // Set on the group made for a shared fund: the trip the fund pays for. Its
+  // settle-up then covers both money spent from the fund and expenses people
+  // paid themselves. One group per fund (enforced in code).
+  fundGoalId BigInt?      @map("fund_goal_id")
+  fundGoal   SavingsGoal? @relation("GroupFund", fields: [fundGoalId], references: [id])
 
   expenses    Expense[]
   settlements ExpenseGroupSettlement[]
   members     ExpenseGroupMember[]
 
+  @@index([fundGoalId])
   @@map("expense_groups")
 }
 
@@ -394,6 +405,11 @@ model ExpenseSplitParticipant {
   adminUserId BigInt    @map("admin_user_id")
   adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
 
+  // Set when this person says their share isn't right. Cleared when they take
+  // it back, or when the split is changed (the rows are written afresh).
+  disputedAt  DateTime? @map("disputed_at")
+  disputeNote String?   @map("dispute_note")
+
   @@unique([expenseId, adminUserId])
   @@index([adminUserId])
   @@map("expense_split_participants")
@@ -414,6 +430,10 @@ model SavingsGoal {
   // picker, but keeps its history.
   closedAt     DateTime? @map("closed_at")
   createdAt    DateTime  @default(now()) @map("created_at")
+  // "fund" = a shared fund (e.g. a trip kitty): money is collected up front,
+  // expenses are paid from it, and at the end each person gets back what they
+  // put in less their share. Null/"savings" = a plain savings goal.
+  kind         String?   @map("kind")
 
   accountHolderAdminUserId BigInt?    @map("account_holder_admin_user_id")
   accountHolder            AdminUser? @relation("SavingsAccountHolder", fields: [accountHolderAdminUserId], references: [id])
@@ -428,6 +448,8 @@ model SavingsGoal {
   contributions SavingsContribution[]
   expenses      Expense[]
   members       SavingsGoalMember[]
+  // A shared fund's trip group (see ExpenseGroup.fundGoalId).
+  fundGroups    ExpenseGroup[]        @relation("GroupFund")
 
   @@index([accountHolderAdminUserId])
   @@map("savings_goals")
@@ -465,6 +487,29 @@ model SavingsContribution {
   @@index([goalId])
   @@index([contributedByAdminUserId])
   @@map("savings_contributions")
+}
+
+// What happened in the Money Hub and who did it — "Asha closed Goa Trip",
+// "Ravi deleted a repayment". Written alongside each change and never edited.
+// No relations, so an entry never keeps an account from being deleted.
+model ActivityLog {
+  id        BigInt   @id @default(0) @map("_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actorAdminUserId BigInt @map("actor_admin_user_id")
+  // A short machine name, e.g. "group.closed" or "settlement.removed".
+  action  String
+  // What it says in the History list, names as they were at the time.
+  summary String
+
+  expenseId      BigInt? @map("expense_id")
+  expenseGroupId BigInt? @map("expense_group_id")
+  savingsGoalId  BigInt? @map("savings_goal_id")
+  // Everyone it concerns: they (and the actor) see it in their History.
+  involvedAdminUserIds BigInt[] @map("involved_admin_user_ids")
+
+  @@index([createdAt])
+  @@map("activity_logs")
 }
 
 // Uploaded images (profile picture, signature, project images) stored in

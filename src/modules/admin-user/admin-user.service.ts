@@ -130,6 +130,35 @@ export function assertMayChangeAccount(
   if (target.isSuperAdmin) throw ForbiddenError("Only the owner can change another super admin's account");
 }
 
+// Whoever added someone gives them their first login, but once they can sign
+// in, how they sign in is theirs: a member who could still set their password,
+// email or mobile (an emailed code goes to that address) could sign in as them
+// and see what they share with others. Super admins still can, as above.
+export function mayChangeSignIn(
+  target: Pick<AdminUser, "id" | "passwordHash">,
+  actor: Pick<ActingAdmin, "id" | "isSuperAdmin">,
+) {
+  return actor.isSuperAdmin || target.id === actor.id || target.passwordHash === null;
+}
+
+function assertMayChangeSignIn(
+  existing: Pick<AdminUser, "id" | "passwordHash" | "email" | "mobile">,
+  input: Pick<UpdateAdminUserInput, "password" | "removeLogin" | "email" | "mobile">,
+  actor: ActingAdmin,
+) {
+  if (mayChangeSignIn(existing, actor)) return;
+  const changesSignIn =
+    input.password !== undefined ||
+    Boolean(input.removeLogin) ||
+    (input.email !== undefined && input.email !== existing.email) ||
+    (input.mobile !== undefined && input.mobile !== existing.mobile);
+  if (changesSignIn) {
+    throw ForbiddenError(
+      "This person signs in on their own now, so only they or a super admin can change their password, email or mobile",
+    );
+  }
+}
+
 // Set on anything that should end the sessions someone already has. Written out
 // rather than incremented, because older accounts may hold null here.
 const nextSessionVersion = (account: Pick<AdminUser, "sessionVersion">) => (account.sessionVersion ?? 0) + 1;
@@ -375,6 +404,7 @@ export async function updateAdminUser(id: bigint, input: UpdateAdminUserInput, a
   const existing = await findManageable(id, actor);
   assertMemberGrant(actor, input);
   assertMayChangeAccount(existing, actor);
+  assertMayChangeSignIn(existing, input, actor);
   const superAdminChange =
     input.isSuperAdmin !== undefined && input.isSuperAdmin !== (existing.isOwner || existing.isSuperAdmin)
       ? input.isSuperAdmin

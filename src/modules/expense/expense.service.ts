@@ -6,12 +6,16 @@ import { addMissingMembers, assertGroupAccess, mayRecordRepayment } from "../exp
 import { computeDirectTransfers } from "./direct-balances";
 import { computeEqualShares, normalizeSplit, resolveCustomShares, type SplitShare } from "./split";
 import { assertGoalAccess } from "../savings-goal/savings-goal.service";
+import { isSharedFund } from "../savings-goal/fund-split";
+import { formatAmount, logActivity, namesOf } from "../activity/activity.service";
+import { recordRepayment } from "../activity/repayments";
+import { sendNotices } from "../activity/money-email";
 
 const includeRelations = {
   category: true,
   paidBy: { select: { id: true, email: true, name: true } },
   createdBy: { select: { id: true, email: true, name: true } },
-  savingsGoal: { select: { id: true, name: true } },
+  savingsGoal: { select: { id: true, name: true, kind: true } },
   expenseGroup: { select: { id: true, name: true } },
   splitParticipants: {
     include: { adminUser: { select: { id: true, email: true, name: true } } },
@@ -21,6 +25,73 @@ const includeRelations = {
 export interface RequestingAdmin {
   id: bigint;
   isSuperAdmin: boolean;
+}
+
+function loadExpense(id: bigint) {
+  return prisma.expense.findUniqueOrThrow({ where: { id }, include: includeRelations });
+}
+
+type LoadedExpense = Awaited<ReturnType<typeof loadExpense>>;
+
+// "Dinner" (₹1,200), or just the amount when there's no description.
+function expenseLabel(expense: { description: string | null; amount: string }) {
+  const description = expense.description?.trim();
+  return description
+    ? `"${description}" (${formatAmount(expense.amount)})`
+    : `an expense of ${formatAmount(expense.amount)}`;
+}
+
+const inGroup = (expense: LoadedExpense) => (expense.expenseGroup ? ` in ${expense.expenseGroup.name}` : "");
+
+function peopleOn(expense: {
+  paidByAdminUserId: bigint;
+  createdByAdminUserId: bigint | null;
+  splitParticipants: { adminUserId: bigint }[];
+}) {
+  return [
+    expense.paidByAdminUserId,
+    expense.createdByAdminUserId,
+    ...expense.splitParticipants.map((participant) => participant.adminUserId),
+  ];
+}
+
+// Tells each person whose share is new or different what they now owe, so
+// nobody is put on a split without knowing. `before` is each share as it was.
+async function notifyShares(expense: LoadedExpense, admin: RequestingAdmin, before = new Map<bigint, string>()) {
+  const changed = expense.splitParticipants.filter(
+    (participant) => before.get(participant.adminUserId) !== participant.shareAmount,
+  );
+  if (changed.length === 0) return;
+  const name = await namesOf([admin.id, expense.paidByAdminUserId]);
+  const actor = name(admin.id);
+  const shareOf = new Map(changed.map((participant) => [participant.adminUserId, participant.shareAmount]));
+  await sendNotices(
+    changed.map((participant) => participant.adminUserId),
+    admin.id,
+    (recipient) => {
+      const share = shareOf.get(recipient.id);
+      if (share === undefined) return null;
+      const paidByThem = expense.paidByAdminUserId === recipient.id;
+      const wasOn = before.has(recipient.id);
+      return {
+        subject: wasOn ? `${actor} changed your share of an expense` : `${actor} split an expense with you`,
+        lines: [
+          `${actor} ${wasOn ? "changed your share of" : "added you to"} ${expenseLabel(expense)}${inGroup(expense)}.`,
+          paidByThem
+            ? "You're down as the one who paid it."
+            : 'If your share isn\'t right, open the expense in Girish Creations and choose "This isn\'t right" so they know.',
+        ],
+        details: [
+          { label: "Date", value: expense.date.toISOString().slice(0, 10) },
+          { label: "Total", value: formatAmount(expense.amount) },
+          { label: "Paid by", value: paidByThem ? "You" : name(expense.paidByAdminUserId) },
+          { label: "Your share", value: formatAmount(share) },
+        ],
+        footer: "You're receiving this because an expense was split with you.",
+        reference: `expense-share-${expense.id}`,
+      };
+    },
+  );
 }
 
 // Private by default (only who paid it, and who logged it, can see it) —
@@ -34,6 +105,23 @@ function involving(admin: RequestingAdmin) {
       { splitParticipants: { some: { adminUserId: admin.id } } },
     ],
   };
+}
+
+// Whether someone can see this expense: they're on it, they're in its group
+// (who see all of a group's expenses), or they're a super admin.
+export async function canSeeExpense(id: bigint, admin: RequestingAdmin) {
+  if (admin.isSuperAdmin) return true;
+  const expense = await prisma.expense.findFirst({
+    where: { id },
+    select: { expenseGroupId: true, paidByAdminUserId: true, createdByAdminUserId: true, splitParticipants: { select: { adminUserId: true } } },
+  });
+  if (!expense) return false;
+  if (peopleOn(expense).includes(admin.id)) return true;
+  if (!expense.expenseGroupId) return false;
+  const member = await prisma.expenseGroupMember.count({
+    where: { expenseGroupId: expense.expenseGroupId, adminUserId: admin.id },
+  });
+  return member > 0;
 }
 
 export async function listExpenses(admin: RequestingAdmin) {
@@ -139,7 +227,12 @@ async function assertSavingsGoalUsable(savingsGoalId: bigint | null | undefined,
   if (!goal) {
     throw BadRequestError("That savings goal no longer exists");
   }
-  await assertGoalAccess(savingsGoalId, admin);
+  // Anyone on a shared fund's trip can pay from the fund, even if they aren't
+  // on the fund itself (they were added to the trip later).
+  const onFundTrip = await prisma.expenseGroupMember.count({
+    where: { adminUserId: admin.id, expenseGroup: { fundGoalId: savingsGoalId } },
+  });
+  if (onFundTrip === 0) await assertGoalAccess(savingsGoalId, admin);
   if (goal.closedAt) {
     throw BadRequestError(`Savings goal "${goal.name}" is closed`);
   }
@@ -152,6 +245,38 @@ async function assertCategoryExists(categoryId: bigint) {
   if (found === 0) {
     throw BadRequestError("That category no longer exists");
   }
+}
+
+// A shared fund pays for its own trip: money from it goes in that trip's group
+// (filled in when no group is given), and an expense in the trip is paid either
+// from its fund or from the payer's own money. Returns the group to use.
+async function groupForFund(savingsGoalId: bigint | null, expenseGroupId: bigint | null) {
+  if (savingsGoalId) {
+    const goal = await prisma.savingsGoal.findUnique({
+      where: { id: savingsGoalId },
+      select: { name: true, fundGroups: { select: { id: true, name: true }, take: 1 } },
+    });
+    const trip = goal?.fundGroups[0];
+    if (trip) {
+      if (expenseGroupId === null) return trip.id;
+      if (expenseGroupId !== trip.id) {
+        throw BadRequestError(`Money from ${goal!.name} is for ${trip.name}, so put the expense in that group`);
+      }
+      return expenseGroupId;
+    }
+  }
+  if (expenseGroupId) {
+    const group = await prisma.expenseGroup.findUnique({
+      where: { id: expenseGroupId },
+      select: { name: true, fundGoalId: true, fundGoal: { select: { name: true } } },
+    });
+    if (group?.fundGoalId && savingsGoalId && savingsGoalId !== group.fundGoalId) {
+      throw BadRequestError(
+        `Expenses in ${group.name} are paid from ${group.fundGoal?.name ?? "its fund"} or the payer's own money`,
+      );
+    }
+  }
+  return expenseGroupId;
 }
 
 export interface ExpenseInput {
@@ -197,7 +322,11 @@ async function replaceSplitParticipants(expenseId: bigint, shares: SplitShare[])
   });
 }
 
-export async function createExpense(input: ExpenseInput, admin: RequestingAdmin) {
+export async function createExpense(given: ExpenseInput, admin: RequestingAdmin) {
+  const input = {
+    ...given,
+    expenseGroupId: await groupForFund(given.savingsGoalId ?? null, given.expenseGroupId ?? null),
+  };
   await assertGroupOpen(input.expenseGroupId);
   if (input.expenseGroupId) await assertGroupAccess(input.expenseGroupId, admin);
   await assertPayerAllowed(input.paidByAdminUserId, input.expenseGroupId, admin);
@@ -229,17 +358,38 @@ export async function createExpense(input: ExpenseInput, admin: RequestingAdmin)
     await addMissingMembers(input.expenseGroupId, [input.paidByAdminUserId, ...sharerIds]);
   }
 
-  return prisma.expense.findUniqueOrThrow({ where: { id: created.id }, include: includeRelations });
+  const loaded = await loadExpense(created.id);
+  await logActivity({
+    actorId: admin.id,
+    action: "expense.created",
+    summary: `Added ${expenseLabel(loaded)}${inGroup(loaded)}`,
+    involved: peopleOn(loaded),
+    expenseGroupId: loaded.expenseGroupId,
+    expenseId: loaded.id,
+  });
+  await notifyShares(loaded, admin);
+  return loaded;
 }
 
-export async function updateExpense(id: bigint, input: Partial<ExpenseInput>, admin: RequestingAdmin) {
+export async function updateExpense(id: bigint, given: Partial<ExpenseInput>, admin: RequestingAdmin) {
   const existing = await prisma.expense.findUnique({ where: { id } });
   if (!existing) {
     throw NotFoundError("Expense not found");
   }
+  const input = { ...given };
+  if (given.savingsGoalId !== undefined || given.expenseGroupId !== undefined) {
+    const nextGoal = given.savingsGoalId !== undefined ? given.savingsGoalId : existing.savingsGoalId;
+    const nextGroup = given.expenseGroupId !== undefined ? given.expenseGroupId : existing.expenseGroupId;
+    const fitted = await groupForFund(nextGoal ?? null, nextGroup ?? null);
+    if (fitted !== nextGroup) input.expenseGroupId = fitted;
+  }
   if (!mayChangeExpense(existing, admin)) {
     throw ForbiddenError("Only the person who paid or logged this expense can change it");
   }
+  const sharesBefore = await prisma.expenseSplitParticipant.findMany({
+    where: { expenseId: id },
+    select: { adminUserId: true, shareAmount: true },
+  });
   await assertGroupOpen(existing.expenseGroupId);
   if (input.expenseGroupId !== undefined && input.expenseGroupId !== existing.expenseGroupId) {
     await assertGroupOpen(input.expenseGroupId);
@@ -309,7 +459,17 @@ export async function updateExpense(id: bigint, input: Partial<ExpenseInput>, ad
     await addMissingMembers(groupId, [payerId, ...participants.map((participant) => participant.adminUserId)]);
   }
 
-  return prisma.expense.findUniqueOrThrow({ where: { id }, include: includeRelations });
+  const loaded = await loadExpense(id);
+  await logActivity({
+    actorId: admin.id,
+    action: "expense.updated",
+    summary: `Changed ${expenseLabel(loaded)}${inGroup(loaded)}`,
+    involved: [...peopleOn(loaded), ...sharesBefore.map((share) => share.adminUserId)],
+    expenseGroupId: loaded.expenseGroupId,
+    expenseId: loaded.id,
+  });
+  await notifyShares(loaded, admin, new Map(sharesBefore.map((share) => [share.adminUserId, share.shareAmount])));
+  return loaded;
 }
 
 export async function deleteExpense(id: bigint, admin: RequestingAdmin) {
@@ -321,7 +481,74 @@ export async function deleteExpense(id: bigint, admin: RequestingAdmin) {
     throw ForbiddenError("Only the person who paid or logged this expense can delete it");
   }
   await assertGroupOpen(existing.expenseGroupId);
+  const loaded = await loadExpense(id);
   await prisma.expense.delete({ where: { id } });
+  await logActivity({
+    actorId: admin.id,
+    action: "expense.deleted",
+    summary: `Deleted ${expenseLabel(loaded)}${inGroup(loaded)}`,
+    involved: peopleOn(loaded),
+    expenseGroupId: loaded.expenseGroupId,
+    expenseId: loaded.id,
+  });
+}
+
+// Someone who shares an expense says their share isn't right (or takes that
+// back). It doesn't change any amounts: it tells whoever paid and logged it,
+// who can fix the split. Changing the split clears it.
+export async function setExpenseDispute(
+  id: bigint,
+  disputed: boolean,
+  note: string | null | undefined,
+  admin: RequestingAdmin,
+) {
+  const existing = await prisma.expense.findUnique({ where: { id }, include: includeRelations });
+  if (!existing) {
+    throw NotFoundError("Expense not found");
+  }
+  const share = existing.splitParticipants.find((participant) => participant.adminUserId === admin.id);
+  if (!share || existing.paidByAdminUserId === admin.id) {
+    throw ForbiddenError("Only someone who shares this expense can say their share isn't right");
+  }
+  const cleanNote = disputed ? note?.trim() || null : null;
+  if (Boolean(share.disputedAt) === disputed && cleanNote === share.disputeNote) {
+    return existing;
+  }
+  await prisma.expenseSplitParticipant.update({
+    where: { id: share.id },
+    data: { disputedAt: disputed ? new Date() : null, disputeNote: cleanNote },
+  });
+  const loaded = await loadExpense(id);
+  await logActivity({
+    actorId: admin.id,
+    action: disputed ? "expense.disputed" : "expense.dispute-withdrawn",
+    summary: disputed
+      ? `Said their share of ${expenseLabel(loaded)} isn't right${cleanNote ? `: ${cleanNote}` : ""}`
+      : `Took back their objection to ${expenseLabel(loaded)}`,
+    involved: peopleOn(loaded),
+    expenseGroupId: loaded.expenseGroupId,
+    expenseId: loaded.id,
+  });
+  const name = await namesOf([admin.id]);
+  const who = name(admin.id);
+  await sendNotices(
+    [loaded.paidByAdminUserId, ...(loaded.createdByAdminUserId ? [loaded.createdByAdminUserId] : [])],
+    admin.id,
+    () => ({
+      subject: disputed ? `${who} says their share isn't right` : `${who} is fine with their share now`,
+      lines: disputed
+        ? [
+            `${who} says their share of ${expenseLabel(loaded)}${inGroup(loaded)} isn't right.`,
+            ...(cleanNote ? [`They said: "${cleanNote}"`] : []),
+            "Open the expense to check the split. Changing it clears this.",
+          ]
+        : [`${who} took back their objection to ${expenseLabel(loaded)}${inGroup(loaded)}.`],
+      details: [{ label: "Their share", value: formatAmount(share.shareAmount) }],
+      footer: "You're receiving this because you paid or logged this expense.",
+      reference: `expense-dispute-${loaded.id}`,
+    }),
+  );
+  return loaded;
 }
 
 // ── Daily splits ─────────────────────────────────────────────────────────
@@ -352,6 +579,7 @@ export async function getDirectBalances(admin: RequestingAdmin) {
       },
       select: {
         paidBy: personSelect,
+        savingsGoal: { select: { kind: true } },
         splitParticipants: { select: { shareAmount: true, adminUser: personSelect } },
       },
     }),
@@ -364,7 +592,10 @@ export async function getDirectBalances(admin: RequestingAdmin) {
       orderBy: { date: "desc" },
     }),
   ]);
-  const transfers = computeDirectTransfers(expenses, settlements).filter(
+  // A shared fund paid these, and is settled on its own, so nobody owes the
+  // person who logged them.
+  const owed = expenses.filter((expense) => !isSharedFund(expense.savingsGoal));
+  const transfers = computeDirectTransfers(owed, settlements).filter(
     (transfer) => admin.isSuperAdmin || isParty(admin, transfer.fromAdminUserId, transfer.toAdminUserId),
   );
   return { transfers, settlements };
@@ -405,6 +636,7 @@ export async function addDirectSettlement(input: DirectSettlementInput, admin: R
       toAdminUserId: input.toAdminUserId,
     },
   });
+  await recordRepayment("added", input, admin);
   return getDirectBalances(admin);
 }
 
@@ -418,4 +650,5 @@ export async function deleteDirectSettlement(id: bigint, admin: RequestingAdmin)
     throw ForbiddenError("Only the person who received this money can remove it");
   }
   await prisma.expenseGroupSettlement.delete({ where: { id } });
+  await recordRepayment("removed", existing, admin);
 }

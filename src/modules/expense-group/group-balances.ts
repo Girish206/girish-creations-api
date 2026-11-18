@@ -1,4 +1,5 @@
 import { toCents } from "../../utils/money";
+import { isSharedFund, type FundSplitRow } from "../savings-goal/fund-split";
 
 export interface PersonRef {
   id: bigint;
@@ -9,6 +10,9 @@ export interface PersonRef {
 export interface GroupExpenseRow {
   amount: string;
   paidBy: PersonRef;
+  // Spent from a savings goal. A shared fund's expenses are settled through
+  // the fund, so they count in the group's total but not its balances.
+  savingsGoal?: { kind: string | null } | null;
   splitParticipants: { shareAmount: string; adminUser: PersonRef }[];
 }
 
@@ -27,9 +31,26 @@ export interface MemberBalance {
   shareCents: number;
   sentCents: number;
   receivedCents: number;
+  // Groups linked to a shared fund: what they put into the fund, their part
+  // of what was paid from it, and (for whoever keeps the fund) the money left
+  // in it that they hold — negative when the fund was overspent.
+  fundPutInCents: number;
+  fundShareCents: number;
+  fundHeldCents: number;
   // > 0: others still owe them this much. < 0: they still owe this much.
   pendingCents: number;
 }
+
+// A trip's shared fund, settled together with the trip: each person's fund
+// split, and who keeps the fund's money.
+export interface GroupFund {
+  holder: PersonRef;
+  split: FundSplitRow[];
+}
+
+// Where someone stands from the money alone, before any repayments.
+export const owedFromMoney = (balance: MemberBalance) =>
+  balance.paidCents - balance.shareCents + balance.fundPutInCents - balance.fundShareCents - balance.fundHeldCents;
 
 export interface SuggestedTransfer {
   fromAdminUserId: bigint;
@@ -45,7 +66,7 @@ export interface SuggestedTransfer {
 // nobody is moved on to paying someone else. Only changing an expense can change
 // the pairs. The settle-up screen does the same (groupSettlement.ts on the client).
 export function suggestTransfers(balances: MemberBalance[]): SuggestedTransfer[] {
-  const fromExpenses = (balance: MemberBalance) => balance.paidCents - balance.shareCents;
+  const fromExpenses = owedFromMoney;
   const byId = (a: MemberBalance, b: MemberBalance) =>
     a.adminUserId < b.adminUserId ? -1 : a.adminUserId > b.adminUserId ? 1 : 0;
   const creditors = balances
@@ -89,7 +110,14 @@ export function maxRepaymentCents(balances: MemberBalance[], fromId: bigint, toI
 // Worked out here rather than in the browser because expenses are private:
 // each member only receives the ones they're part of, so a client-side sum
 // would differ per person and could suggest the wrong repayments.
-export function summarizeGroup(expenses: GroupExpenseRow[], settlements: GroupSettlementRow[]) {
+// With a linked fund, its money is netted in: put in counts like paying, a
+// share of fund spending like any share, and whoever keeps the fund owes the
+// group what's left in it (or is owed what it was overspent by).
+export function summarizeGroup(
+  expenses: GroupExpenseRow[],
+  settlements: GroupSettlementRow[],
+  fund: GroupFund | null = null,
+) {
   const byId = new Map<bigint, MemberBalance>();
   const entry = (person: PersonRef) => {
     let balance = byId.get(person.id);
@@ -101,6 +129,9 @@ export function summarizeGroup(expenses: GroupExpenseRow[], settlements: GroupSe
         shareCents: 0,
         sentCents: 0,
         receivedCents: 0,
+        fundPutInCents: 0,
+        fundShareCents: 0,
+        fundHeldCents: 0,
         pendingCents: 0,
       };
       byId.set(person.id, balance);
@@ -112,6 +143,7 @@ export function summarizeGroup(expenses: GroupExpenseRow[], settlements: GroupSe
   for (const expense of expenses) {
     const amountCents = toCents(expense.amount);
     totalCents += amountCents;
+    if (isSharedFund(expense.savingsGoal)) continue;
     entry(expense.paidBy).paidCents += amountCents;
     if (expense.splitParticipants.length > 0) {
       for (const participant of expense.splitParticipants) {
@@ -122,6 +154,16 @@ export function summarizeGroup(expenses: GroupExpenseRow[], settlements: GroupSe
     }
   }
 
+  if (fund) {
+    for (const row of fund.split) {
+      const balance = entry({ id: row.adminUserId, name: row.name, email: null });
+      balance.fundPutInCents += row.putInCents;
+      balance.fundShareCents += row.shareCents;
+    }
+    const leftCents = fund.split.reduce((sum, row) => sum + row.putInCents - row.shareCents, 0);
+    if (fund.split.length > 0) entry(fund.holder).fundHeldCents += leftCents;
+  }
+
   for (const settlement of settlements) {
     const cents = toCents(settlement.amount);
     entry(settlement.fromAdminUser).sentCents += cents;
@@ -130,7 +172,7 @@ export function summarizeGroup(expenses: GroupExpenseRow[], settlements: GroupSe
 
   const balances = Array.from(byId.values());
   for (const balance of balances) {
-    balance.pendingCents = balance.paidCents - balance.shareCents + balance.sentCents - balance.receivedCents;
+    balance.pendingCents = owedFromMoney(balance) + balance.sentCents - balance.receivedCents;
   }
   // Biggest creditors first, then those who are square, then debtors.
   balances.sort((a, b) => b.pendingCents - a.pendingCents || a.name.localeCompare(b.name));

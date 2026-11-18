@@ -8,6 +8,7 @@ import {
   deleteExpenseHandler,
   getDirectBalancesHandler,
   listExpensesHandler,
+  setExpenseDisputeHandler,
   updateExpenseHandler,
 } from "./expense.controller";
 
@@ -31,3 +32,5 @@ expenseAdminRouter.delete(
 expenseAdminRouter.post("/", requireAdminAuth, requireExpenseAccess, asyncHandler(createExpenseHandler));
 expenseAdminRouter.put("/:id", requireAdminAuth, requireExpenseAccess, asyncHandler(updateExpenseHandler));
 expenseAdminRouter.delete("/:id", requireAdminAuth, requireExpenseAccess, asyncHandler(deleteExpenseHandler));
+// Someone sharing an expense says their share isn't right, or takes it back.
+expenseAdminRouter.put("/:id/dispute", requireAdminAuth, requireExpenseAccess, asyncHandler(setExpenseDisputeHandler));

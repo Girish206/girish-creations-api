@@ -11,6 +11,9 @@ const balance = (adminUserId: bigint, name: string, paidCents: number, shareCent
   shareCents,
   sentCents,
   receivedCents,
+  fundPutInCents: 0,
+  fundShareCents: 0,
+  fundHeldCents: 0,
   pendingCents: paidCents - shareCents + sentCents - receivedCents,
 });
 

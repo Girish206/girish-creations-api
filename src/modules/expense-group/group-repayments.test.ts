@@ -10,6 +10,9 @@ const balance = (adminUserId: bigint, pendingCents: number): MemberBalance => ({
   shareCents: 0,
   sentCents: 0,
   receivedCents: 0,
+  fundPutInCents: 0,
+  fundShareCents: 0,
+  fundHeldCents: 0,
   pendingCents,
 });
 
@@ -33,6 +36,9 @@ const person = (adminUserId: bigint, paidCents: number, shareCents: number): Mem
   shareCents,
   sentCents: 0,
   receivedCents: 0,
+  fundPutInCents: 0,
+  fundShareCents: 0,
+  fundHeldCents: 0,
   pendingCents: paidCents - shareCents,
 });
 const trip = () => [
