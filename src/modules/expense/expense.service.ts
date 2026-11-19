@@ -10,6 +10,7 @@ import { isSharedFund } from "../savings-goal/fund-split";
 import { formatAmount, logActivity, namesOf } from "../activity/activity.service";
 import { recordRepayment } from "../activity/repayments";
 import { sendNotices } from "../activity/money-email";
+import { assertCategoryUsable } from "../expense-category/expense-category.service";
 
 const includeRelations = {
   category: true,
@@ -238,14 +239,6 @@ async function assertSavingsGoalUsable(savingsGoalId: bigint | null | undefined,
   }
 }
 
-// A required relation pointing at a missing category would break the whole
-// expense list, as MongoDB has no foreign keys to stop it.
-async function assertCategoryExists(categoryId: bigint) {
-  const found = await prisma.expenseCategory.count({ where: { id: categoryId } });
-  if (found === 0) {
-    throw BadRequestError("That category no longer exists");
-  }
-}
 
 // A shared fund pays for its own trip: money from it goes in that trip's group
 // (filled in when no group is given), and an expense in the trip is paid either
@@ -332,7 +325,7 @@ export async function createExpense(given: ExpenseInput, admin: RequestingAdmin)
   await assertPayerAllowed(input.paidByAdminUserId, input.expenseGroupId, admin);
   await assertSavingsGoalUsable(input.savingsGoalId, admin);
   await assertDateInGroupWindow(input.expenseGroupId, new Date(input.date));
-  await assertCategoryExists(input.categoryId);
+  await assertCategoryUsable(input.categoryId, admin);
   const shares = resolveShares(input, input.amount, input.paidByAdminUserId) ?? [];
   const sharerIds = shares.map((share) => share.adminUserId);
   await assertAdminUsersExist([input.paidByAdminUserId, ...sharerIds]);
@@ -399,7 +392,7 @@ export async function updateExpense(id: bigint, given: Partial<ExpenseInput>, ad
     await assertSavingsGoalUsable(input.savingsGoalId, admin);
   }
   if (input.categoryId !== undefined && input.categoryId !== existing.categoryId) {
-    await assertCategoryExists(input.categoryId);
+    await assertCategoryUsable(input.categoryId, admin);
   }
   const groupId = input.expenseGroupId !== undefined ? input.expenseGroupId : existing.expenseGroupId;
   await assertDateInGroupWindow(groupId, input.date ? new Date(input.date) : existing.date);

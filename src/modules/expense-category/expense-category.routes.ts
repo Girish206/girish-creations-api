@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncHandler } from "../../utils/asyncHandler";
-import { requireAdminAuth, requireModuleAccess, requireSuperAdmin } from "../../middleware/auth";
+import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import { upload } from "../../middleware/upload";
 import {
   createExpenseCategoryHandler,
@@ -26,13 +26,14 @@ expenseCategoryAdminRouter.post(
   upload.single("image"),
   asyncHandler(createExpenseCategoryHandler),
 );
-// Categories are shared by everyone, so anyone can add one but only a super
-// admin can change or remove what others are using.
+// Anyone with expense access adds a category: a super admin's goes into the
+// shared list, anyone else's is a custom one only they see. Who may change,
+// merge or remove which is checked in expense-category.service.ts (shared:
+// super admin; custom: its owner).
 expenseCategoryAdminRouter.put(
   "/:id",
   requireAdminAuth,
   requireExpenseAccess,
-  requireSuperAdmin,
   upload.single("image"),
   asyncHandler(updateExpenseCategoryHandler),
 );
@@ -40,7 +41,6 @@ expenseCategoryAdminRouter.delete(
   "/:id",
   requireAdminAuth,
   requireExpenseAccess,
-  requireSuperAdmin,
   asyncHandler(deleteExpenseCategoryHandler),
 );
 // Tidying duplicates: one category's expenses move into another, then it goes.
@@ -48,6 +48,5 @@ expenseCategoryAdminRouter.post(
   "/:id/merge",
   requireAdminAuth,
   requireExpenseAccess,
-  requireSuperAdmin,
   asyncHandler(mergeExpenseCategoryHandler),
 );

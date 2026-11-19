@@ -3,9 +3,14 @@ import { z } from "zod";
 import * as expenseCategoryService from "./expense-category.service";
 import { parseId } from "../../utils/parseId";
 import { uploadFile } from "../../middleware/upload";
+import { isSuperAdmin } from "../../middleware/auth";
 
-export async function listExpenseCategoriesHandler(_req: Request, res: Response) {
-  const items = await expenseCategoryService.listExpenseCategories();
+function requestingAdmin(req: Request) {
+  return { id: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) };
+}
+
+export async function listExpenseCategoriesHandler(req: Request, res: Response) {
+  const items = await expenseCategoryService.listExpenseCategories(requestingAdmin(req));
   res.json({ data: items });
 }
 
@@ -28,19 +33,19 @@ async function parseCategoryInput(req: Request) {
 }
 
 export async function createExpenseCategoryHandler(req: Request, res: Response) {
-  const created = await expenseCategoryService.createExpenseCategory(await parseCategoryInput(req));
+  const created = await expenseCategoryService.createExpenseCategory(await parseCategoryInput(req), requestingAdmin(req));
   res.status(201).json({ data: created });
 }
 
 export async function updateExpenseCategoryHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  const updated = await expenseCategoryService.updateExpenseCategory(id, await parseCategoryInput(req));
+  const updated = await expenseCategoryService.updateExpenseCategory(id, await parseCategoryInput(req), requestingAdmin(req));
   res.json({ data: updated });
 }
 
 export async function deleteExpenseCategoryHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  await expenseCategoryService.deleteExpenseCategory(id);
+  await expenseCategoryService.deleteExpenseCategory(id, requestingAdmin(req));
   res.status(204).send();
 }
 
@@ -49,6 +54,6 @@ const mergeSchema = z.object({ intoCategoryId: z.coerce.bigint() });
 export async function mergeExpenseCategoryHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
   const { intoCategoryId } = mergeSchema.parse(req.body);
-  const result = await expenseCategoryService.mergeExpenseCategory(id, intoCategoryId);
+  const result = await expenseCategoryService.mergeExpenseCategory(id, intoCategoryId, requestingAdmin(req));
   res.json({ data: result });
 }

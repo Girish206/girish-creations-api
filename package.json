@@ -13,6 +13,7 @@
     "import:mysql": "tsx prisma/import-mysql.ts",
     "email:test": "tsx prisma/send-test-email.ts",
     "seed:categories": "tsx prisma/seed-expense-categories.ts",
+    "migrate:generalise-categories": "tsx prisma/generalise-categories.ts",
     "migrate:link-profiles": "tsx prisma/link-profiles.ts",
     "migrate:dedupe-profiles": "tsx prisma/dedupe-profiles.ts",
     "migrate:link-fund-groups": "tsx prisma/link-fund-groups.ts",

@@ -45,6 +45,7 @@ authRouter.post("/login", ...loginLimits, asyncHandler(loginHandler));
 authRouter.post("/otp/request", ...requestCodeLimits, asyncHandler(requestCodeHandler));
 authRouter.post("/otp/login", ...useCodeLimits, asyncHandler(codeLoginHandler));
 authRouter.post("/password/reset", ...useCodeLimits, asyncHandler(resetPasswordHandler));
-authRouter.post("/refresh", requireAdminToken, asyncHandler(refreshHandler));
+// Rate-limited per address: it accepts a refresh token without a bearer.
+authRouter.post("/refresh", asyncHandler(rateLimit("refresh-ip", 120, 15 * 60_000)), asyncHandler(refreshHandler));
 authRouter.get("/me", requireAdminToken, asyncHandler(meHandler));
 authRouter.post("/logout", requireAdminToken, asyncHandler(logoutHandler));

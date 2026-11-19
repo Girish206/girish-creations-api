@@ -5,7 +5,7 @@ import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { HttpError, UnauthorizedError } from "../../utils/httpError";
 import { normalizeMobile } from "../../utils/mobile";
-import type { AdminTokenPayload } from "../../types/express";
+import type { AdminRefreshTokenPayload, AdminTokenPayload } from "../../types/express";
 
 // Finds the account for an email address or a mobile number.
 async function findByIdentifier(identifier: string) {
@@ -39,9 +39,20 @@ export function issueToken(admin: AdminUser, remember = false) {
   };
   const expiresIn = (remember ? env.jwtRememberExpiresIn : env.jwtExpiresIn) as jwt.SignOptions["expiresIn"];
   const token = jwt.sign(payload, env.jwtSecret, { expiresIn });
+  // Signing out everywhere (sessionVersion) ends refresh tokens too.
+  const refreshPayload: AdminRefreshTokenPayload = {
+    sub: String(admin.id),
+    app: "admin-refresh",
+    sv: admin.sessionVersion ?? 0,
+    ...(remember ? { remember: true } : {}),
+  };
+  const refreshToken = jwt.sign(refreshPayload, env.jwtSecret, {
+    expiresIn: env.jwtRefreshExpiresIn as jwt.SignOptions["expiresIn"],
+  });
 
   return {
     token,
+    refreshToken,
     admin: {
       id: admin.id,
       email: admin.email,
@@ -90,11 +101,22 @@ export async function login(identifier: string, password: string, remember = fal
   return issueToken(admin, remember);
 }
 
-// Swaps a still-valid token for a fresh one carrying the account's current
-// name and access, so a remembered session keeps sliding forward. `remember`
-// turns a short session into a remembered one. Fails once the account is
-// deactivated or loses its password.
-export async function refresh(current: AdminTokenPayload, remember = false) {
+// Reads a refresh token, or null if it's invalid, expired, or not one.
+export function verifyRefreshToken(refreshToken: string): AdminRefreshTokenPayload | null {
+  try {
+    const payload = jwt.verify(refreshToken, env.jwtSecret) as AdminRefreshTokenPayload;
+    return payload.app === "admin-refresh" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+// Swaps a refresh token (or a still-valid access token) for a fresh pair
+// carrying the account's current name and access, so the session keeps
+// sliding forward. `remember` turns a short session into a remembered one.
+// Fails once the account is deactivated, loses its password, or is signed out
+// everywhere.
+export async function refresh(current: Pick<AdminTokenPayload, "sub" | "sv" | "remember">, remember = false) {
   const admin = await prisma.adminUser.findUnique({ where: { id: BigInt(current.sub) } });
   if (!admin || !canSignIn(admin) || (current.sv ?? 0) !== (admin.sessionVersion ?? 0)) {
     throw UnauthorizedError("This account can no longer sign in");

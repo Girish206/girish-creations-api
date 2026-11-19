@@ -19,6 +19,15 @@ export interface AdminTokenPayload {
   sv?: number;
 }
 
+// The long-lived token the app swaps for a new access token. Its `app` is
+// "admin-refresh", so requireAdminToken never accepts it for a request.
+export interface AdminRefreshTokenPayload {
+  sub: string;
+  app: "admin-refresh";
+  sv: number;
+  remember?: boolean;
+}
+
 declare global {
   namespace Express {
     interface Request {

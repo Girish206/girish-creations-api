@@ -260,7 +260,13 @@ model AuthCode {
 
 model ExpenseCategory {
   id        BigInt   @id @default(0) @map("_id")
-  name      String   @unique
+  // Unique per owner (see @@unique below), matched ignoring case in
+  // expense-category.service.ts.
+  name      String
+  // Null for a shared category (everyone sees it; only a super admin adds or
+  // changes those). Set for a member's custom category: only that member
+  // sees, picks, changes or removes it.
+  ownerAdminUserId BigInt? @map("owner_admin_user_id")
   // How the category is drawn: "icon" (a Font Awesome class in `icon`),
   // "text" (a short label/emoji in `icon`) or "image" (an uploaded file's
   // /api/files/<id> path in `icon`). Null on older rows — the client then
@@ -271,6 +277,7 @@ model ExpenseCategory {
 
   expenses Expense[]
 
+  @@unique([ownerAdminUserId, name])
   @@map("expense_categories")
 }
 

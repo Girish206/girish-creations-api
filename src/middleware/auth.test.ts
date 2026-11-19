@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
-import { signInProblem } from "../modules/auth/auth.service";
+import { signInProblem, verifyRefreshToken } from "../modules/auth/auth.service";
 import { currentSession, requireAdminToken } from "./auth";
 
 const base = {
@@ -33,6 +33,15 @@ test("an admin session opens the admin", () => {
 test("another app's session, or one that names no app, is refused", () => {
   assert.equal(accepts(requireAdminToken, { ...base, app: "other" }), false);
   assert.equal(accepts(requireAdminToken, base), false);
+});
+
+test("a refresh token can't be used as an access token, and vice versa", () => {
+  const refresh = { sub: "1", app: "admin-refresh", sv: 0 };
+  assert.equal(accepts(requireAdminToken, refresh), false);
+  assert.ok(verifyRefreshToken(jwt.sign(refresh, env.jwtSecret)));
+  assert.equal(verifyRefreshToken(jwt.sign({ ...base, app: "admin" }, env.jwtSecret)), null);
+  assert.equal(verifyRefreshToken(jwt.sign(refresh, "another-secret")), null);
+  assert.equal(verifyRefreshToken(jwt.sign({ ...refresh, exp: 1 }, env.jwtSecret)), null);
 });
 
 const account = {

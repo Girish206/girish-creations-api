@@ -2,6 +2,8 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import * as authService from "./auth.service";
 import * as otpService from "./auth-otp.service";
+import { requireAdminToken } from "../../middleware/auth";
+import { UnauthorizedError } from "../../utils/httpError";
 
 // `email` holds whatever the user typed: an email address or a mobile number.
 // `remember` asks for a long-lived "keep me signed in" session.
@@ -50,10 +52,23 @@ export async function resetPasswordHandler(req: Request, res: Response) {
   res.json({ data: await otpService.resetPassword(identifier, code, newPassword, remember) });
 }
 
+// With a refresh token in the body, an expired access token doesn't matter;
+// without one, a still-valid access token (Bearer) is swapped instead.
 export async function refreshHandler(req: Request, res: Response) {
-  const { remember } = z.object({ remember: z.boolean().optional() }).parse(req.body ?? {});
-  const { token, admin } = await authService.refresh(req.admin!, remember);
-  res.json({ data: { token, admin } });
+  const { remember, refreshToken } = z
+    .object({ remember: z.boolean().optional(), refreshToken: z.string().min(1).optional() })
+    .parse(req.body ?? {});
+  let current: Parameters<typeof authService.refresh>[0];
+  if (refreshToken) {
+    const payload = authService.verifyRefreshToken(refreshToken);
+    if (!payload) throw UnauthorizedError("This session has ended. Sign in again.");
+    current = payload;
+  } else {
+    // Throws a 401 unless the bearer is valid; sets req.admin when it is.
+    requireAdminToken(req, res, () => {});
+    current = req.admin!;
+  }
+  res.json({ data: await authService.refresh(current, remember) });
 }
 
 export async function meHandler(req: Request, res: Response) {
