@@ -94,10 +94,11 @@ test("the password-changed notice says when, in Indian time, and what to do", ()
 
 test("the sign-up email asks to verify the address and carries the code", () => {
   const email = buildCodeEmail({ address: "new@example.com", name: "Asha Rao" }, "042517", "register");
+  const text = email.textBody ?? "";
   assert.match(email.subject, /^Verify your email for /);
-  assert.ok(email.textBody.includes("042517"));
-  assert.ok(email.textBody.startsWith("Hi Asha,"));
-  assert.match(email.textBody, /no account is created without the code/);
+  assert.ok(text.includes("042517"));
+  assert.ok(text.startsWith("Hi Asha,"));
+  assert.match(text, /no account is created without the code/);
 });
 
 test("a sign-up code can't be used as a sign-in code", () => {
