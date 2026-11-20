@@ -7,8 +7,11 @@ import {
   codeLoginHandler,
   loginHandler,
   logoutHandler,
+  lookupHandler,
   meHandler,
   refreshHandler,
+  registerRequestHandler,
+  registerVerifyHandler,
   requestCodeHandler,
   resetPasswordHandler,
 } from "./auth.controller";
@@ -45,6 +48,14 @@ authRouter.post("/login", ...loginLimits, asyncHandler(loginHandler));
 authRouter.post("/otp/request", ...requestCodeLimits, asyncHandler(requestCodeHandler));
 authRouter.post("/otp/login", ...useCodeLimits, asyncHandler(codeLoginHandler));
 authRouter.post("/password/reset", ...useCodeLimits, asyncHandler(resetPasswordHandler));
+// Pocket's first step (sign in or sign up?), and signing up with a verified email.
+const lookupLimits = [
+  asyncHandler(rateLimit("lookup-ip", 60, 15 * 60_000)),
+  asyncHandler(rateLimit("lookup-id", 20, 15 * 60_000, identifierKey)),
+];
+authRouter.post("/lookup", ...lookupLimits, asyncHandler(lookupHandler));
+authRouter.post("/register/request", ...requestCodeLimits, asyncHandler(registerRequestHandler));
+authRouter.post("/register/verify", ...useCodeLimits, asyncHandler(registerVerifyHandler));
 // Rate-limited per address: it accepts a refresh token without a bearer.
 authRouter.post("/refresh", asyncHandler(rateLimit("refresh-ip", 120, 15 * 60_000)), asyncHandler(refreshHandler));
 authRouter.get("/me", requireAdminToken, asyncHandler(meHandler));

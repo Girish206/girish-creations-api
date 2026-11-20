@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import * as authService from "./auth.service";
 import * as otpService from "./auth-otp.service";
+import * as registerService from "./auth-register.service";
 import { requireAdminToken } from "../../middleware/auth";
 import { UnauthorizedError } from "../../utils/httpError";
 
@@ -50,6 +51,34 @@ const resetPasswordSchema = codeLoginSchema.extend({
 export async function resetPasswordHandler(req: Request, res: Response) {
   const { email: identifier, code, newPassword, remember } = resetPasswordSchema.parse(req.body);
   res.json({ data: await otpService.resetPassword(identifier, code, newPassword, remember) });
+}
+
+// Pocket's first sign-in step: does this email or mobile number have an account?
+export async function lookupHandler(req: Request, res: Response) {
+  const { email: identifier } = z.object({ email: z.string().trim().min(1) }).parse(req.body);
+  res.json({ data: await registerService.lookup(identifier) });
+}
+
+const registerRequestSchema = z.object({
+  email: z.string().trim().email("Enter a valid email").max(200),
+  name: z.string().trim().min(1, "Enter your name").max(100),
+  // Same minimum as everywhere else a password is set.
+  password: z.string().min(8).max(200),
+});
+
+export async function registerRequestHandler(req: Request, res: Response) {
+  res.json({ data: await registerService.requestRegistration(registerRequestSchema.parse(req.body)) });
+}
+
+const registerVerifySchema = z.object({
+  email: z.string().trim().email().max(200),
+  code: codeSchema,
+  remember: z.boolean().optional(),
+});
+
+export async function registerVerifyHandler(req: Request, res: Response) {
+  const { email, code, remember } = registerVerifySchema.parse(req.body);
+  res.json({ data: await registerService.verifyRegistration(email, code, remember) });
 }
 
 // With a refresh token in the body, an expired access token doesn't matter;

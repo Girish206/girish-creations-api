@@ -2,8 +2,9 @@ import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import type { EmailMessage } from "../../lib/email";
 import { BRAND, codeBlock, escapeHtml, finePrint, paragraph, renderSimpleEmail } from "../../lib/email-layout";
 
-// One-time codes emailed for signing in, or for setting a new password.
-export type CodePurpose = "login" | "reset";
+// One-time codes emailed for signing in, for setting a new password, or for
+// verifying the email address of someone signing up.
+export type CodePurpose = "login" | "reset" | "register";
 
 export const CODE_TTL_MINUTES = 10;
 // Wrong guesses allowed on one code before it stops working. With 6 digits,
@@ -41,15 +42,25 @@ const greeting = (name?: string) => (firstNameOf(name) ? `Hi ${firstNameOf(name)
 
 export function buildCodeEmail(to: { address: string; name?: string }, code: string, purpose: CodePurpose): EmailMessage {
   const brand = BRAND;
-  const isLogin = purpose === "login";
-  const title = isLogin ? `Your ${brand.name} sign-in code` : `Reset your ${brand.name} password`;
-  const intro = isLogin
-    ? `Use this code to sign in to ${brand.name}.`
-    : `Use this code to reset your password for ${brand.name}.`;
+  const copy = {
+    login: {
+      title: `Your ${brand.name} sign-in code`,
+      intro: `Use this code to sign in to ${brand.name}.`,
+      ignore: "Didn't ask for this? You can safely ignore this email: nobody can sign in without the code.",
+    },
+    reset: {
+      title: `Reset your ${brand.name} password`,
+      intro: `Use this code to reset your password for ${brand.name}.`,
+      ignore: "Didn't ask for this? You can safely ignore this email and your password stays the same.",
+    },
+    register: {
+      title: `Verify your email for ${brand.name}`,
+      intro: `Use this code to finish creating your ${brand.name} account.`,
+      ignore: "Didn't sign up? You can safely ignore this email: no account is created without the code.",
+    },
+  }[purpose];
+  const { title, intro, ignore } = copy;
   const expiry = `Expires in ${CODE_TTL_MINUTES} minutes and works only once.`;
-  const ignore = isLogin
-    ? "Didn't ask for this? You can safely ignore this email: nobody can sign in without the code."
-    : "Didn't ask for this? You can safely ignore this email and your password stays the same.";
   const share = `Never share this code. ${brand.name} will never ask you for it.`;
   return {
     fromName: brand.name,
@@ -80,7 +91,10 @@ export function buildCodeEmail(to: { address: string; name?: string }, code: str
         codeBlock(brand, code, expiry),
         finePrint(`${ignore}<br>${share}`),
       ].join("\n"),
-      footer: `Sent by ${brand.name} because this code was requested for your account.`,
+      footer:
+        purpose === "register"
+          ? `Sent by ${brand.name} because this address was used to sign up.`
+          : `Sent by ${brand.name} because this code was requested for your account.`,
     }),
   };
 }

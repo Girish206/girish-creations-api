@@ -8,7 +8,7 @@ import { normalizeMobile } from "../../utils/mobile";
 import type { AdminRefreshTokenPayload, AdminTokenPayload } from "../../types/express";
 
 // Finds the account for an email address or a mobile number.
-async function findByIdentifier(identifier: string) {
+export async function findByIdentifier(identifier: string) {
   if (identifier.includes("@")) {
     return prisma.adminUser.findUnique({ where: { email: identifier.toLowerCase() } });
   }
@@ -18,7 +18,7 @@ async function findByIdentifier(identifier: string) {
 
 // A guest member (added purely to appear in expense-split / savings-holder
 // pickers) has no passwordHash and can never log in until one is set.
-const canSignIn = (admin: AdminUser) =>
+export const canSignIn = (admin: AdminUser) =>
   admin.isActive && admin.passwordHash !== null && (admin.email !== null || admin.mobile !== null);
 
 // Signs a token for the account as it is now. `remember` makes it a

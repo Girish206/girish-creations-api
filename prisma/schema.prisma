@@ -258,6 +258,24 @@ model AuthCode {
   @@map("auth_codes")
 }
 
+// Someone signing up in Pocket, between asking for a verification code and
+// entering it. No account exists until the code is right; then the account is
+// created (or the guest with this email is turned into it) and this row goes.
+model PendingRegistration {
+  id           BigInt   @id @default(0) @map("_id")
+  // Lowercased. One pending sign-up per address: asking again replaces it.
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  // hashCode(code, id, "register"), like AuthCode.
+  codeHash     String   @map("code_hash")
+  attempts     Int      @default(0)
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("pending_registrations")
+}
+
 model ExpenseCategory {
   id        BigInt   @id @default(0) @map("_id")
   // Unique per owner (see @@unique below), matched ignoring case in
