@@ -11,6 +11,7 @@ import { computeFundSplit, fundPeople } from "../savings-goal/fund-split";
 import { buildSplitEmail, splitEmailAudience } from "./group-split-email";
 import { logActivity, namesOf } from "../activity/activity.service";
 import { recordRepayment } from "../activity/repayments";
+import { sendReminder } from "../activity/reminders";
 
 const userSelect = { select: { id: true, email: true, name: true } } as const;
 
@@ -412,6 +413,27 @@ export async function setExpenseGroupClosed(id: bigint, closed: boolean, admin: 
   return present(updated);
 }
 
+// Starts settling up (who pays whom shows in the app), or goes back to just
+// the split while the trip carries on. Same people as closing.
+export async function setExpenseGroupSettling(id: bigint, settling: boolean, admin: RequestingAdmin) {
+  const { existing } = await findRunnableGroupOrThrow(id, admin);
+  const updated = await prisma.expenseGroup.update({
+    where: { id },
+    data: { settlingStartedAt: settling ? (existing.settlingStartedAt ?? new Date()) : null },
+    include: includeRelations,
+  });
+  if (Boolean(existing.settlingStartedAt) !== settling) {
+    await logActivity({
+      actorId: admin.id,
+      action: settling ? "group.settling_started" : "group.settling_stopped",
+      summary: `${settling ? "Started settling up" : "Stopped settling up"} ${updated.name}`,
+      involved: await peopleInGroup(id),
+      expenseGroupId: id,
+    });
+  }
+  return present(updated);
+}
+
 export async function deleteExpenseGroup(id: bigint, admin: RequestingAdmin) {
   const { existing, memberIds } = await findRunnableGroupOrThrow(id, admin);
   // Only an empty group can be deleted — counted across everyone's
@@ -435,14 +457,24 @@ export async function deleteExpenseGroup(id: bigint, admin: RequestingAdmin) {
   });
 }
 
+// Whether the group is settling up (who pays whom shows). Repayments already
+// recorded, or a closed group, count as settling. Same rule as the app.
+export function isSettling(group: { settlingStartedAt: Date | null; closedAt: Date | null; settlements: unknown[] }) {
+  return group.settlingStartedAt !== null || group.closedAt !== null || group.settlements.length > 0;
+}
+
 // Stops a double click, or someone repeatedly mailing the whole group.
 const SPLIT_EMAIL_COOLDOWN_SECONDS = 60;
 
 export function splitEmailBlocker(
-  group: { expenseCount: number; splitEmailSentAt: Date | null },
+  // `settling` false: nobody has started settling up yet (see isSettling).
+  group: { expenseCount: number; splitEmailSentAt: Date | null; settling?: boolean },
   now = Date.now(),
 ) {
   if (group.expenseCount === 0) return "This group has no expenses yet, so there's no split-up to send.";
+  if (group.settling === false) {
+    return "The trip is still going. Start settling up first, then email everyone what they pay or get.";
+  }
   const waitSeconds = group.splitEmailSentAt
     ? Math.ceil(SPLIT_EMAIL_COOLDOWN_SECONDS - (now - group.splitEmailSentAt.getTime()) / 1000)
     : 0;
@@ -456,7 +488,11 @@ export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
   await findManageableGroupOrThrow(id, admin);
   const group = await prisma.expenseGroup.findUniqueOrThrow({ where: { id }, include: includeRelations });
   const summary = summaryOf(group);
-  const blocker = splitEmailBlocker({ expenseCount: summary.expenseCount, splitEmailSentAt: group.splitEmailSentAt });
+  const blocker = splitEmailBlocker({
+    expenseCount: summary.expenseCount,
+    splitEmailSentAt: group.splitEmailSentAt,
+    settling: isSettling(group),
+  });
   if (blocker) throw BadRequestError(blocker);
   if (!isEmailEnabled()) {
     throw new HttpError(503, "Email isn't set up on the server yet, so this can't be sent.", "EMAIL_OFF");
@@ -548,8 +584,31 @@ export async function addSettlement(groupId: bigint, input: SettlementInput, adm
       toAdminUserId: input.toAdminUserId,
     },
   });
+  // A repayment means settling up has started, whether or not anyone pressed
+  // "Start settling up".
+  if (!group.settlingStartedAt) {
+    await prisma.expenseGroup.update({ where: { id: groupId }, data: { settlingStartedAt: new Date() } });
+  }
   await recordRepayment("added", input, admin, group);
   return present(await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations }));
+}
+
+// Reminds someone in the group what they still owe (once settling up has
+// started: before that nobody owes anybody yet).
+export async function remindGroupDebt(
+  groupId: bigint,
+  pair: { fromAdminUserId: bigint; toAdminUserId: bigint },
+  admin: RequestingAdmin,
+) {
+  const group = await findGroupOrThrow(groupId, admin);
+  const loaded = await prisma.expenseGroup.findUniqueOrThrow({ where: { id: groupId }, include: includeRelations });
+  if (!isSettling(loaded)) {
+    throw BadRequestError("The trip is still going. Start settling up before sending reminders.");
+  }
+  if (loaded.closedAt) throw BadRequestError("This group is closed");
+  const { balances, fundHolderId } = summaryOf(loaded);
+  const amountCents = maxRepaymentCents(balances, pair.fromAdminUserId, pair.toAdminUserId, fundHolderId);
+  await sendReminder({ ...pair, amountCents, group: { id: group.id, name: group.name } }, admin);
 }
 
 export async function deleteSettlement(groupId: bigint, settlementId: bigint, admin: RequestingAdmin) {

@@ -223,6 +223,9 @@ model AdminUser {
   sessionVersion       Int?     @map("session_version")
   // Last time someone sent them the welcome email from the admin side.
   welcomeEmailSentAt   DateTime? @map("welcome_email_sent_at")
+  // When they last opened their notifications: anything newer is unread.
+  // Null = never (everything about them counts as unread).
+  notificationsSeenAt  DateTime? @map("notifications_seen_at")
   createdAt            DateTime @default(now()) @map("created_at")
 
   portfolioProfile        UserProfile?
@@ -311,6 +314,10 @@ model ExpenseGroup {
   // Set once the trip is over and everyone has settled up — a closed group
   // can't take new expenses (or edits to its existing ones) until reopened.
   closedAt  DateTime? @map("closed_at")
+  // Set when someone starts settling up. Until then the trip is still going:
+  // the app shows the split but not who pays whom. Groups with repayments
+  // recorded, or closed, count as settling either way.
+  settlingStartedAt DateTime? @map("settling_started_at")
   createdAt DateTime  @default(now()) @map("created_at")
   // Last time someone emailed the group its split-up from the settle-up screen.
   splitEmailSentAt DateTime? @map("split_email_sent_at")
@@ -407,13 +414,78 @@ model Expense {
   expenseGroupId BigInt?       @map("expense_group_id")
   expenseGroup   ExpenseGroup? @relation(fields: [expenseGroupId], references: [id])
 
+  // Paid in another currency (a trip abroad): what it cost there, in which
+  // currency, and the rate used. `amount` is always the rupee value, worked
+  // out as originalAmount × exchangeRate, so every total stays in INR.
+  originalAmount   String? @map("original_amount")
+  originalCurrency String? @map("original_currency")
+  exchangeRate     String? @map("exchange_rate")
+
+  // Added automatically by a recurring expense (rent, a subscription).
+  recurringExpenseId BigInt? @map("recurring_expense_id")
+
   splitParticipants ExpenseSplitParticipant[]
 
   @@index([categoryId])
   @@index([paidByAdminUserId])
   @@index([savingsGoalId])
   @@index([expenseGroupId])
+  @@index([date])
   @@map("expenses")
+}
+
+// A monthly limit someone sets on their own spending in a category. Their
+// spending is their share of each expense (all of it when not split).
+model CategoryBudget {
+  id               BigInt   @id @default(0) @map("_id")
+  ownerAdminUserId BigInt   @map("owner_admin_user_id")
+  categoryId       BigInt   @map("category_id")
+  amount           String
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([ownerAdminUserId, categoryId])
+  @@map("category_budgets")
+}
+
+// An expense that repeats (rent, a subscription, an EMI). Each time one is
+// due, a real expense is added for it — when its owner next opens the app,
+// so no scheduler is needed. Only daily expenses (no group or savings).
+model RecurringExpense {
+  id               BigInt    @id @default(0) @map("_id")
+  ownerAdminUserId BigInt    @map("owner_admin_user_id")
+  amount           String
+  description      String?
+  categoryId       BigInt    @map("category_id")
+  // "monthly" (same day each month, the last day for short months) or "weekly".
+  frequency        String
+  // Day of the month it falls on (1-31), kept so a 31st survives February.
+  dayOfMonth       Int?      @map("day_of_month")
+  // The next date an expense is due to be added.
+  nextDate         DateTime  @map("next_date")
+  // Stops after this date. Null = keeps going.
+  endDate          DateTime? @map("end_date")
+  // Split equally with these people each time (empty = not split).
+  splitAdminUserIds BigInt[] @map("split_admin_user_ids")
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([ownerAdminUserId])
+  @@map("recurring_expenses")
+}
+
+// Money someone received (salary, a refund, interest). Private to them.
+model Income {
+  id               BigInt   @id @default(0) @map("_id")
+  ownerAdminUserId BigInt   @map("owner_admin_user_id")
+  amount           String
+  date             DateTime
+  // Where it came from: "Salary", "Freelance", "Refund", or anything typed.
+  source           String
+  description      String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([ownerAdminUserId, date])
+  @@map("incomes")
 }
 
 // Equal-split participants for an expense (e.g. a trip cost split among a

@@ -62,6 +62,47 @@ export function formatAmount(amount: string | number) {
   });
 }
 
+// Someone's notifications: what other people did that concerns them, newest
+// first, and how many came in since they last looked.
+export async function listNotifications(adminId: bigint, limit = 40) {
+  const [account, rows] = await Promise.all([
+    prisma.adminUser.findUnique({ where: { id: adminId }, select: { notificationsSeenAt: true } }),
+    prisma.activityLog.findMany({
+      where: { involvedAdminUserIds: { has: adminId }, actorAdminUserId: { not: adminId } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit,
+    }),
+  ]);
+  const seenAt = account?.notificationsSeenAt ?? null;
+  const unread = await prisma.activityLog.count({
+    where: {
+      involvedAdminUserIds: { has: adminId },
+      actorAdminUserId: { not: adminId },
+      ...(seenAt ? { createdAt: { gt: seenAt } } : {}),
+    },
+  });
+  const name = await namesOf(rows.map((row) => row.actorAdminUserId));
+  return {
+    unread,
+    seenAt,
+    items: rows.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      action: row.action,
+      summary: row.summary,
+      expenseId: row.expenseId,
+      expenseGroupId: row.expenseGroupId,
+      savingsGoalId: row.savingsGoalId,
+      actor: { id: row.actorAdminUserId, name: name(row.actorAdminUserId) },
+      unread: !seenAt || row.createdAt > seenAt,
+    })),
+  };
+}
+
+export async function markNotificationsSeen(adminId: bigint) {
+  await prisma.adminUser.update({ where: { id: adminId }, data: { notificationsSeenAt: new Date() } });
+}
+
 // "expenses" and "savings" are those pages' history; "daily" is repayments on
 // daily splits (outside any group).
 export type ActivityArea = "expenses" | "savings" | "daily";

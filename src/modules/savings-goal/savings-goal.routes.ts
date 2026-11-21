@@ -6,6 +6,7 @@ import {
   createSavingsGoalHandler,
   deleteSavingsContributionHandler,
   deleteSavingsGoalHandler,
+  listGoalExpensesHandler,
   listSavingsGoalsHandler,
   setSavingsGoalClosedHandler,
   updateSavingsGoalHandler,
@@ -16,6 +17,12 @@ const requireExpenseAccess = requireModuleAccess("savings");
 export const savingsGoalAdminRouter = Router();
 savingsGoalAdminRouter.get("/", requireAdminAuth, requireExpenseAccess, asyncHandler(listSavingsGoalsHandler));
 savingsGoalAdminRouter.post("/", requireAdminAuth, requireExpenseAccess, asyncHandler(createSavingsGoalHandler));
+savingsGoalAdminRouter.get(
+  "/:id/expenses",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(listGoalExpensesHandler),
+);
 savingsGoalAdminRouter.put(
   "/:id",
   requireAdminAuth,

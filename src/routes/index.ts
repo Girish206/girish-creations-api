@@ -21,6 +21,9 @@ import { adminUserAdminRouter, expenseMembersAdminRouter } from "../modules/admi
 import { expenseCategoryAdminRouter } from "../modules/expense-category/expense-category.routes";
 import { expenseGroupAdminRouter } from "../modules/expense-group/expense-group.routes";
 import { expenseAdminRouter } from "../modules/expense/expense.routes";
+import { budgetAdminRouter } from "../modules/budget/budget.routes";
+import { recurringAdminRouter } from "../modules/recurring/recurring.routes";
+import { incomeAdminRouter } from "../modules/income/income.routes";
 import { savingsGoalAdminRouter } from "../modules/savings-goal/savings-goal.routes";
 import { activityAdminRouter } from "../modules/activity/activity.routes";
 
@@ -76,3 +79,6 @@ adminRouter.use("/expense-groups", expenseGroupAdminRouter);
 adminRouter.use("/expenses", expenseAdminRouter);
 adminRouter.use("/savings-goals", savingsGoalAdminRouter);
 adminRouter.use("/expense-activity", activityAdminRouter);
+adminRouter.use("/expense-budgets", budgetAdminRouter);
+adminRouter.use("/recurring-expenses", recurringAdminRouter);
+adminRouter.use("/incomes", incomeAdminRouter);

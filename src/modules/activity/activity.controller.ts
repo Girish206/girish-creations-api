@@ -36,6 +36,15 @@ async function seesWholeHistory(filter: z.infer<typeof querySchema>, admin: { id
   return false;
 }
 
+export async function listNotificationsHandler(req: Request, res: Response) {
+  res.json({ data: await activityService.listNotifications(BigInt(req.admin!.sub)) });
+}
+
+export async function markNotificationsSeenHandler(req: Request, res: Response) {
+  await activityService.markNotificationsSeen(BigInt(req.admin!.sub));
+  res.status(204).send();
+}
+
 export async function listActivityHandler(req: Request, res: Response) {
   const filter = querySchema.parse(req.query);
   const admin = { id: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) };

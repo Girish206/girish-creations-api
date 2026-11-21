@@ -4,6 +4,7 @@ import { isSuperAdmin } from "../../middleware/auth";
 import * as savingsGoalService from "./savings-goal.service";
 import { amountSchema, dateSchema } from "../../utils/money";
 import { parseId } from "../../utils/parseId";
+import { listGoalExpenses } from "../expense/expense.service";
 
 function requestingAdmin(req: Request) {
   return { id: BigInt(req.admin!.sub), isSuperAdmin: isSuperAdmin(req.admin) };
@@ -12,6 +13,12 @@ function requestingAdmin(req: Request) {
 export async function listSavingsGoalsHandler(req: Request, res: Response) {
   const items = await savingsGoalService.listSavingsGoals(requestingAdmin(req));
   res.json({ data: items });
+}
+
+// Everything spent from the goal, for anyone who can see it.
+export async function listGoalExpensesHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  res.json({ data: await listGoalExpenses(id, requestingAdmin(req)) });
 }
 
 const goalSchema = z.object({

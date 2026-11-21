@@ -50,6 +50,15 @@ export async function setExpenseGroupClosedHandler(req: Request, res: Response) 
   res.json({ data: updated });
 }
 
+const settlingSchema = z.object({ settling: z.boolean() });
+
+export async function setExpenseGroupSettlingHandler(req: Request, res: Response) {
+  const id = parseId(req.params.id);
+  const { settling } = settlingSchema.parse(req.body);
+  const updated = await expenseGroupService.setExpenseGroupSettling(id, settling, requestingAdmin(req));
+  res.json({ data: updated });
+}
+
 const settlementSchema = z.object({
   amount: amountSchema,
   date: dateSchema,
@@ -68,6 +77,14 @@ export async function deleteSettlementHandler(req: Request, res: Response) {
   const groupId = parseId(req.params.id);
   const settlementId = parseId(req.params.settlementId);
   await expenseGroupService.deleteSettlement(groupId, settlementId, requestingAdmin(req));
+  res.status(204).send();
+}
+
+const reminderSchema = z.object({ fromAdminUserId: z.coerce.bigint(), toAdminUserId: z.coerce.bigint() });
+
+export async function remindGroupDebtHandler(req: Request, res: Response) {
+  const pair = reminderSchema.parse(req.body);
+  await expenseGroupService.remindGroupDebt(parseId(req.params.id), pair, requestingAdmin(req));
   res.status(204).send();
 }
 

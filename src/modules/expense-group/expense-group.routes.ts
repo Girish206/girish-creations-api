@@ -8,8 +8,10 @@ import {
   deleteExpenseGroupHandler,
   listExpenseGroupsHandler,
   listGroupExpensesHandler,
+  remindGroupDebtHandler,
   sendSplitEmailHandler,
   setExpenseGroupClosedHandler,
+  setExpenseGroupSettlingHandler,
   updateExpenseGroupHandler,
 } from "./expense-group.controller";
 
@@ -42,11 +44,23 @@ expenseGroupAdminRouter.put(
   requireExpenseAccess,
   asyncHandler(setExpenseGroupClosedHandler),
 );
+expenseGroupAdminRouter.put(
+  "/:id/settling",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(setExpenseGroupSettlingHandler),
+);
 expenseGroupAdminRouter.post(
   "/:id/split-email",
   requireAdminAuth,
   requireExpenseAccess,
   asyncHandler(sendSplitEmailHandler),
+);
+expenseGroupAdminRouter.post(
+  "/:id/reminders",
+  requireAdminAuth,
+  requireExpenseAccess,
+  asyncHandler(remindGroupDebtHandler),
 );
 expenseGroupAdminRouter.post(
   "/:id/settlements",

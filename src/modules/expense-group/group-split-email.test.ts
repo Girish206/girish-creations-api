@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { suggestTransfers } from "./group-balances";
 import { buildSplitEmail, splitEmailAudience } from "./group-split-email";
-import { splitEmailBlocker } from "./expense-group.service";
+import { isSettling, splitEmailBlocker } from "./expense-group.service";
 
 const balance = (adminUserId: bigint, name: string, paidCents: number, shareCents: number, sentCents = 0, receivedCents = 0) => ({
   adminUserId,
@@ -137,4 +137,17 @@ test("the split-up can be sent again, but not straight away, and not for an empt
     /another in 45 seconds/,
   );
   assert.equal(splitEmailBlocker({ expenseCount: 2, splitEmailSentAt: sentAt }, sentAt.getTime() + 60_000), null);
+});
+
+test("the split-up email waits until the group is settling up", () => {
+  assert.match(splitEmailBlocker({ expenseCount: 2, splitEmailSentAt: null, settling: false }) ?? "", /Start settling up/);
+  assert.equal(splitEmailBlocker({ expenseCount: 2, splitEmailSentAt: null, settling: true }), null);
+});
+
+test("a group is settling once started, repaid or closed", () => {
+  const day = new Date("2026-11-01");
+  assert.equal(isSettling({ settlingStartedAt: null, closedAt: null, settlements: [] }), false);
+  assert.equal(isSettling({ settlingStartedAt: day, closedAt: null, settlements: [] }), true);
+  assert.equal(isSettling({ settlingStartedAt: null, closedAt: day, settlements: [] }), true);
+  assert.equal(isSettling({ settlingStartedAt: null, closedAt: null, settlements: [{}] }), true);
 });

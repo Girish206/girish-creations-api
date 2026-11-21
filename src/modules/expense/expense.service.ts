@@ -9,8 +9,10 @@ import { assertGoalAccess } from "../savings-goal/savings-goal.service";
 import { isSharedFund } from "../savings-goal/fund-split";
 import { formatAmount, logActivity, namesOf } from "../activity/activity.service";
 import { recordRepayment } from "../activity/repayments";
+import { sendReminder } from "../activity/reminders";
 import { sendNotices } from "../activity/money-email";
 import { assertCategoryUsable } from "../expense-category/expense-category.service";
+import type { ForeignAmount } from "./foreign-currency";
 
 const includeRelations = {
   category: true,
@@ -125,9 +127,83 @@ export async function canSeeExpense(id: bigint, admin: RequestingAdmin) {
   return member > 0;
 }
 
-export async function listExpenses(admin: RequestingAdmin) {
+export interface DateRange {
+  // Inclusive "YYYY-MM-DD" bounds; either may be left out.
+  from?: string;
+  to?: string;
+}
+
+function dateWhere(range: DateRange) {
+  if (!range.from && !range.to) return {};
+  return {
+    date: {
+      ...(range.from ? { gte: new Date(range.from) } : {}),
+      // Up to the end of the last day.
+      ...(range.to ? { lt: new Date(new Date(range.to).getTime() + 24 * 60 * 60 * 1000) } : {}),
+    },
+  };
+}
+
+// Someone's expenses, newest first — within a date range when one is given,
+// so the app loads a few months at a time rather than everything at once.
+export async function listExpenses(admin: RequestingAdmin, range: DateRange = {}) {
   return prisma.expense.findMany({
+    where: { ...(admin.isSuperAdmin ? {} : involving(admin)), ...dateWhere(range) },
+    include: includeRelations,
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+  });
+}
+
+// One expense, for whoever can see it.
+export async function getExpense(id: bigint, admin: RequestingAdmin) {
+  if (!(await canSeeExpense(id, admin))) throw NotFoundError("Expense not found");
+  return loadExpense(id);
+}
+
+// Every month someone has expenses in, newest first, with how many and the
+// total of their own share — for the month picker and the dashboard, without
+// loading every expense.
+export async function listExpenseMonths(admin: RequestingAdmin) {
+  const rows = await prisma.expense.findMany({
     where: admin.isSuperAdmin ? undefined : involving(admin),
+    select: {
+      date: true,
+      amount: true,
+      paidByAdminUserId: true,
+      splitParticipants: { select: { adminUserId: true, shareAmount: true } },
+    },
+  });
+  const months = new Map<string, { month: string; count: number; myShareCents: number }>();
+  for (const row of rows) {
+    const key = row.date.toISOString().slice(0, 7);
+    const entry = months.get(key) ?? { month: key, count: 0, myShareCents: 0 };
+    entry.count += 1;
+    entry.myShareCents += myShareCents(row, admin.id);
+    months.set(key, entry);
+  }
+  return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+// What an expense cost this person: their share when split, all of it when
+// they paid an unsplit one, nothing otherwise.
+export function myShareCents(
+  expense: { amount: string; paidByAdminUserId: bigint; splitParticipants: { adminUserId: bigint; shareAmount: string }[] },
+  adminId: bigint,
+) {
+  if (expense.splitParticipants.length > 0) {
+    const share = expense.splitParticipants.find((p) => p.adminUserId === adminId);
+    return share ? Math.round(Number(share.shareAmount) * 100) : 0;
+  }
+  return expense.paidByAdminUserId === adminId ? Math.round(Number(expense.amount) * 100) : 0;
+}
+
+// Everything spent from a savings goal or fund, for anyone who can see the
+// goal — not just the expenses they're on, so its "where it was spent" is
+// complete and matches its spent total.
+export async function listGoalExpenses(savingsGoalId: bigint, admin: RequestingAdmin) {
+  await assertGoalAccess(savingsGoalId, admin);
+  return prisma.expense.findMany({
+    where: { savingsGoalId },
     include: includeRelations,
     orderBy: [{ date: "desc" }, { id: "desc" }],
   });
@@ -288,6 +364,11 @@ export interface ExpenseInput {
   // A custom split: each person's own amount, which must add up to the
   // expense. Takes the place of splitAdminUserIds when present.
   splitShares?: SplitShare[];
+  // Paid in another currency: `amount` is then its rupee value (see
+  // foreign-currency.ts). Null clears it on update.
+  foreign?: ForeignAmount | null;
+  // Set when a recurring expense adds it (server side only).
+  recurringExpenseId?: bigint | null;
 }
 
 // What an expense's split should become: undefined when it isn't changing.
@@ -300,6 +381,15 @@ function resolveShares(
   if (input.splitAdminUserIds === undefined) return undefined;
   const ids = normalizeSplit(input.splitAdminUserIds, payerId);
   return ids.length > 0 ? computeEqualShares(amount, ids) : [];
+}
+
+// The foreign-currency columns: set, or cleared when paid in rupees.
+function foreignData(foreign: ForeignAmount | null | undefined) {
+  return {
+    originalAmount: foreign?.originalAmount ?? null,
+    originalCurrency: foreign?.originalCurrency ?? null,
+    exchangeRate: foreign?.exchangeRate ?? null,
+  };
 }
 
 async function replaceSplitParticipants(expenseId: bigint, shares: SplitShare[]) {
@@ -341,6 +431,8 @@ export async function createExpense(given: ExpenseInput, admin: RequestingAdmin)
       createdByAdminUserId: admin.id,
       savingsGoalId: input.savingsGoalId ?? null,
       expenseGroupId: input.expenseGroupId ?? null,
+      ...foreignData(input.foreign),
+      recurringExpenseId: input.recurringExpenseId ?? null,
     },
   });
 
@@ -370,6 +462,11 @@ export async function updateExpense(id: bigint, given: Partial<ExpenseInput>, ad
     throw NotFoundError("Expense not found");
   }
   const input = { ...given };
+  // A new rupee amount with no foreign amount no longer matches the old
+  // foreign one, so that goes.
+  if (input.amount !== undefined && input.foreign === undefined && existing.originalCurrency) {
+    input.foreign = null;
+  }
   if (given.savingsGoalId !== undefined || given.expenseGroupId !== undefined) {
     const nextGoal = given.savingsGoalId !== undefined ? given.savingsGoalId : existing.savingsGoalId;
     const nextGroup = given.expenseGroupId !== undefined ? given.expenseGroupId : existing.expenseGroupId;
@@ -438,6 +535,7 @@ export async function updateExpense(id: bigint, given: Partial<ExpenseInput>, ad
       paidByAdminUserId: input.paidByAdminUserId,
       savingsGoalId: input.savingsGoalId !== undefined ? input.savingsGoalId : undefined,
       expenseGroupId: input.expenseGroupId !== undefined ? input.expenseGroupId : undefined,
+      ...(input.foreign !== undefined ? foreignData(input.foreign) : {}),
     },
   });
 
@@ -631,6 +729,15 @@ export async function addDirectSettlement(input: DirectSettlementInput, admin: R
   });
   await recordRepayment("added", input, admin);
   return getDirectBalances(admin);
+}
+
+// Reminds someone what they still owe on daily splits.
+export async function remindDirectDebt(pair: { fromAdminUserId: bigint; toAdminUserId: bigint }, admin: RequestingAdmin) {
+  const { transfers } = await getDirectBalances({ id: pair.fromAdminUserId, isSuperAdmin: false });
+  const owed = transfers.find(
+    (transfer) => transfer.fromAdminUserId === pair.fromAdminUserId && transfer.toAdminUserId === pair.toAdminUserId,
+  );
+  await sendReminder({ ...pair, amountCents: owed?.amountCents ?? 0, group: null }, admin);
 }
 
 export async function deleteDirectSettlement(id: bigint, admin: RequestingAdmin) {
