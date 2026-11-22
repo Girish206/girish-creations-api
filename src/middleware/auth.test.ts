@@ -72,13 +72,21 @@ test("a session ends after a password change or signing out everywhere", () => {
 });
 
 test("access follows the account, not what the token says", () => {
-  const stale = { ...token, isOwner: true, isSuperAdmin: true, hasExpensesAccess: true };
-  const session = currentSession(stale, { ...account, hasPortfolioAccess: false, hasSavingsAccess: true });
+  const stale = { ...token, isOwner: true, isSuperAdmin: true, hasExpensesAccess: true, hasPortfolioAccess: true };
+  const session = currentSession(stale, { ...account, hasPortfolioAccess: false, hasExpensesAccess: false, hasSavingsAccess: false });
   assert.equal(session?.isOwner, false);
   assert.equal(session?.isSuperAdmin, false);
   assert.equal(session?.hasExpensesAccess, false);
   assert.equal(session?.hasPortfolioAccess, false);
-  assert.equal(session?.hasSavingsAccess, true);
+  assert.equal(session?.hasSavingsAccess, false);
+});
+
+test("Expenses and Savings are one Pocket access: either opens both", () => {
+  const savingsOnly = currentSession(token, { ...account, hasExpensesAccess: false, hasSavingsAccess: true });
+  assert.equal(savingsOnly?.hasExpensesAccess, true);
+  assert.equal(savingsOnly?.hasSavingsAccess, true);
+  const expensesOnly = currentSession(token, { ...account, hasExpensesAccess: true, hasSavingsAccess: false });
+  assert.equal(expensesOnly?.hasSavingsAccess, true);
 });
 
 test("a failed sign-in says what is wrong", () => {

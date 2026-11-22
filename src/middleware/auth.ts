@@ -43,6 +43,12 @@ type SessionAccount = Pick<
   | "hasSavingsAccess"
 >;
 
+// Pocket is one app: Expenses and Savings come together. An account with
+// either flag (older accounts may have just one) can use both.
+export function hasPocketAccess(account: Pick<AdminUser, "hasExpensesAccess" | "hasSavingsAccess">): boolean {
+  return account.hasExpensesAccess || account.hasSavingsAccess;
+}
+
 // The token as the account stands now, or null if the session has ended: it was
 // deactivated, lost its login, or changed password or signed out everywhere
 // since the token was issued. Access changes count from the next request.
@@ -56,8 +62,8 @@ export function currentSession(token: AdminTokenPayload, account: SessionAccount
     isOwner: account.isOwner,
     isSuperAdmin: account.isOwner || account.isSuperAdmin,
     hasPortfolioAccess: account.hasPortfolioAccess,
-    hasExpensesAccess: account.hasExpensesAccess,
-    hasSavingsAccess: account.hasSavingsAccess,
+    hasExpensesAccess: hasPocketAccess(account),
+    hasSavingsAccess: hasPocketAccess(account),
   };
 }
 
@@ -83,7 +89,10 @@ const accessField: Record<AdminModule, keyof AdminTokenPayload> = {
 // Must run after requireAdminAuth (needs req.admin already populated).
 export function requireModuleAccess(module: AdminModule) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    const hasAccess = req.admin?.[accessField[module]];
+    const admin = req.admin;
+    // Expenses and Savings are one Pocket access: either flag opens both.
+    const hasAccess =
+      module === "portfolio" ? admin?.[accessField[module]] : admin?.hasExpensesAccess || admin?.hasSavingsAccess;
     if (!hasAccess) {
       throw ForbiddenError(`No access to the ${module} module`);
     }

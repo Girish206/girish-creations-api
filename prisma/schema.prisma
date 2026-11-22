@@ -479,9 +479,15 @@ model Income {
   ownerAdminUserId BigInt   @map("owner_admin_user_id")
   amount           String
   date             DateTime
-  // Where it came from: "Salary", "Freelance", "Refund", or anything typed.
+  // Its category: "Salary", "Freelance", "Refund", or anything typed.
   source           String
   description      String?
+  // Received in another currency: what it was there, in which currency, and
+  // the rate used. `amount` is always the rupee value (originalAmount ×
+  // exchangeRate), as for expenses.
+  originalAmount   String?  @map("original_amount")
+  originalCurrency String?  @map("original_currency")
+  exchangeRate     String?  @map("exchange_rate")
   createdAt        DateTime @default(now()) @map("created_at")
 
   @@index([ownerAdminUserId, date])

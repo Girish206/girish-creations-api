@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { HttpError, UnauthorizedError } from "../../utils/httpError";
 import { normalizeMobile } from "../../utils/mobile";
+import { hasPocketAccess } from "../../middleware/auth";
 import type { AdminRefreshTokenPayload, AdminTokenPayload } from "../../types/express";
 
 // Finds the account for an email address or a mobile number.
@@ -32,8 +33,8 @@ export function issueToken(admin: AdminUser, remember = false) {
     isOwner: admin.isOwner,
     isSuperAdmin: admin.isOwner || admin.isSuperAdmin,
     hasPortfolioAccess: admin.hasPortfolioAccess,
-    hasExpensesAccess: admin.hasExpensesAccess,
-    hasSavingsAccess: admin.hasSavingsAccess,
+    hasExpensesAccess: hasPocketAccess(admin),
+    hasSavingsAccess: hasPocketAccess(admin),
     ...(remember ? { remember: true } : {}),
     sv: admin.sessionVersion ?? 0,
   };
@@ -60,8 +61,8 @@ export function issueToken(admin: AdminUser, remember = false) {
       isOwner: admin.isOwner,
       isSuperAdmin: admin.isOwner || admin.isSuperAdmin,
       hasPortfolioAccess: admin.hasPortfolioAccess,
-      hasExpensesAccess: admin.hasExpensesAccess,
-      hasSavingsAccess: admin.hasSavingsAccess,
+      hasExpensesAccess: hasPocketAccess(admin),
+      hasSavingsAccess: hasPocketAccess(admin),
     },
   };
 }

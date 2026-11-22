@@ -20,6 +20,14 @@ export async function listExpenseMembersHandler(req: Request, res: Response) {
 // so "Ravi@Gmail.com " from a phone keyboard still signs in as typed.
 const emailSchema = z.string().trim().toLowerCase().email();
 
+// Expenses and Savings are one Pocket access: turning on either turns on
+// both, and turning one off (with the other not on) turns off both.
+function asPocketAccess<T extends { hasExpensesAccess?: boolean; hasSavingsAccess?: boolean }>(input: T): T {
+  if (input.hasExpensesAccess === undefined && input.hasSavingsAccess === undefined) return input;
+  const pocket = Boolean(input.hasExpensesAccess || input.hasSavingsAccess);
+  return { ...input, hasExpensesAccess: pocket, hasSavingsAccess: pocket };
+}
+
 const createSchema = z.object({
   // Omit email, mobile and password for a guest member (listed but can't
   // log in). Login needs a password plus an email or a mobile number.
@@ -48,7 +56,7 @@ function actingAdmin(req: Request): adminUserService.ActingAdmin {
 }
 
 export async function createAdminUserHandler(req: Request, res: Response) {
-  const input = createSchema.parse(req.body);
+  const input = asPocketAccess(createSchema.parse(req.body));
   const created = await adminUserService.createAdminUser(input, actingAdmin(req));
   res.status(201).json({ data: created });
 }
@@ -70,7 +78,7 @@ const updateSchema = z.object({
 
 export async function updateAdminUserHandler(req: Request, res: Response) {
   const id = parseId(req.params.id);
-  const input = updateSchema.parse(req.body);
+  const input = asPocketAccess(updateSchema.parse(req.body));
   const updated = await adminUserService.updateAdminUser(id, input, actingAdmin(req));
   res.json({ data: updated });
 }

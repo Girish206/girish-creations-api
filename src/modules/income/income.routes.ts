@@ -6,6 +6,7 @@ import { requireAdminAuth, requireModuleAccess } from "../../middleware/auth";
 import { amountSchema, dateSchema } from "../../utils/money";
 import { NotFoundError } from "../../utils/httpError";
 import { parseId } from "../../utils/parseId";
+import { toRupees } from "../expense/foreign-currency";
 
 // Money someone received: salary, freelance work, a refund, interest. It's
 // private — each person sees and changes only their own, super admins too
@@ -38,9 +39,27 @@ async function list(req: Request, res: Response) {
 const incomeSchema = z.object({
   amount: amountSchema,
   date: dateSchema,
-  source: z.string().trim().min(1, "Say where it came from").max(60),
+  // The category: "Salary", "Freelance", … or anything typed.
+  source: z.string().trim().min(1, "Pick a category").max(60),
   description: z.string().trim().max(200).nullable().optional(),
+  // Received in another currency (see foreign-currency.ts). Empty or "INR"
+  // means rupees.
+  originalCurrency: z.string().trim().max(3).nullable().optional(),
+  originalAmount: z.coerce.string().trim().nullable().optional(),
+  exchangeRate: z.coerce.string().trim().nullable().optional(),
 });
+
+// The rupee amount and foreign fields to save. As for expenses, a foreign
+// amount's rupee value is worked out here, never taken from the client.
+// Undefined when the currency wasn't sent (an update leaving it as it is).
+function currencyFields(input: Partial<z.infer<typeof incomeSchema>>) {
+  if (input.originalCurrency === undefined) return undefined;
+  if (!input.originalCurrency || input.originalCurrency.toUpperCase() === "INR") {
+    return { originalAmount: null, originalCurrency: null, exchangeRate: null };
+  }
+  const { amount, foreign } = toRupees(input);
+  return { amount, ...foreign };
+}
 
 async function create(req: Request, res: Response) {
   const input = incomeSchema.parse(req.body);
@@ -51,6 +70,7 @@ async function create(req: Request, res: Response) {
       date: new Date(input.date.slice(0, 10)),
       source: input.source,
       description: input.description || null,
+      ...currencyFields(input),
     },
   });
   res.status(201).json({ data: row });
@@ -73,6 +93,7 @@ async function update(req: Request, res: Response) {
       date: input.date ? new Date(input.date.slice(0, 10)) : undefined,
       source: input.source,
       description: input.description !== undefined ? input.description || null : undefined,
+      ...currencyFields(input),
     },
   });
   res.json({ data: row });
