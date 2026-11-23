@@ -17,4 +17,7 @@ const siteOrigins = env.corsOrigin
 export const corsMiddleware = cors({
   origin: [...siteOrigins, ...APP_ORIGINS],
   credentials: true,
+  // The newest Pocket web build (middleware/appBuild.ts): the Android app
+  // reads it to pick up live updates, so the browser has to let it see it.
+  exposedHeaders: ["X-App-Build"],
 });

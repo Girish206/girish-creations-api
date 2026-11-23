@@ -1,5 +1,6 @@
 import express from "express";
 import { corsMiddleware } from "./config/cors";
+import { appBuildHeader } from "./middleware/appBuild";
 import { errorHandler } from "./middleware/errorHandler";
 import { notFound } from "./middleware/notFound";
 import { adminRouter, publicRouter } from "./routes";
@@ -7,6 +8,7 @@ import { adminRouter, publicRouter } from "./routes";
 export const app = express();
 
 app.use(corsMiddleware);
+app.use(appBuildHeader);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

@@ -24,6 +24,9 @@ export const env = {
   adminSeedEmail: process.env.ADMIN_SEED_EMAIL,
   adminSeedPassword: process.env.ADMIN_SEED_PASSWORD,
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+  // Pocket's live-update manifest, named on every reply as X-App-Build
+  // (middleware/appBuild.ts) so the Android app knows when to update.
+  appUpdateUrl: process.env.APP_UPDATE_URL?.trim() || "https://gc-pocket.vercel.app/app-update/latest.json",
   // Where the sign-in links in emails go.
   adminSignInUrl: process.env.ADMIN_SIGN_IN_URL?.trim() || "https://girish-creations.vercel.app/admin",
 };
