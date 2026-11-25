@@ -1,6 +1,16 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import type { EmailMessage } from "../../lib/email";
-import { BRAND, codeBlock, escapeHtml, finePrint, paragraph, renderSimpleEmail } from "../../lib/email-layout";
+import {
+  POCKET_BRAND,
+  codeBlock,
+  detailsPanel,
+  escapeHtml,
+  finePrint,
+  logoImages,
+  paragraph,
+  renderEmail,
+  signOff,
+} from "../../lib/email-layout";
 
 // One-time codes emailed for signing in, for setting a new password, or for
 // verifying the email address of someone signing up.
@@ -41,7 +51,8 @@ const firstNameOf = (name?: string) => name?.trim().split(/\s+/)[0];
 const greeting = (name?: string) => (firstNameOf(name) ? `Hi ${firstNameOf(name)},` : "Hi,");
 
 export function buildCodeEmail(to: { address: string; name?: string }, code: string, purpose: CodePurpose): EmailMessage {
-  const brand = BRAND;
+  // Sign-in is Pocket's (the portfolio admin uses the same accounts).
+  const brand = POCKET_BRAND;
   const copy = {
     login: {
       title: `Your ${brand.name} sign-in code`,
@@ -67,6 +78,7 @@ export function buildCodeEmail(to: { address: string; name?: string }, code: str
     to: [to],
     subject: title,
     clientReference: `auth-${purpose}`,
+    inlineImages: logoImages(brand),
     textBody: [
       greeting(to.name),
       "",
@@ -81,7 +93,8 @@ export function buildCodeEmail(to: { address: string; name?: string }, code: str
       "",
       `- ${brand.name}`,
     ].join("\n"),
-    htmlBody: renderSimpleEmail({
+    htmlBody: renderEmail({
+      brand,
       title,
       // Inboxes show this line on lock screens, so it stays free of the code.
       preheader: `${intro} ${expiry}`,
@@ -90,6 +103,7 @@ export function buildCodeEmail(to: { address: string; name?: string }, code: str
         paragraph(intro),
         codeBlock(brand, code, expiry),
         finePrint(`${ignore}<br>${share}`),
+        signOff(brand, "Thanks,"),
       ].join("\n"),
       footer:
         purpose === "register"
@@ -100,7 +114,8 @@ export function buildCodeEmail(to: { address: string; name?: string }, code: str
 }
 
 export function buildPasswordChangedEmail(to: { address: string; name?: string }, changedAt = new Date()): EmailMessage {
-  const brand = BRAND;
+  // Sign-in is Pocket's (the portfolio admin uses the same accounts).
+  const brand = POCKET_BRAND;
   const when = changedAt.toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
@@ -117,14 +132,21 @@ export function buildPasswordChangedEmail(to: { address: string; name?: string }
     to: [to],
     subject: `Your ${brand.name} password was changed`,
     clientReference: "auth-password-changed",
+    inlineImages: logoImages(brand),
     textBody: [greeting(to.name), "", notice, "", warning, "", `- ${brand.name}`].join("\n"),
-    htmlBody: renderSimpleEmail({
+    htmlBody: renderEmail({
+      brand,
       title,
       preheader: `Your ${brand.name} password was changed on ${when} IST.`,
       body: [
         paragraph(escapeHtml(greeting(to.name))),
-        paragraph(notice),
+        paragraph(escapeHtml(notice)),
+        detailsPanel(brand, [
+          { label: "Account", value: escapeHtml(to.address) },
+          { label: "Changed", value: `${escapeHtml(when)} IST` },
+        ]),
         finePrint(`<strong>Wasn't you?</strong> Use Forgot password on the sign-in page straight away, and contact an administrator.`),
+        signOff(brand, "Thanks,"),
       ].join("\n"),
       footer: `Sent by ${brand.name} to keep your account safe.`,
     }),

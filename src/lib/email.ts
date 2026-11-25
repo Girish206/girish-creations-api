@@ -13,7 +13,8 @@ const DEFAULT_API_URL = "https://cpaas.zoho.com/v1.1/email";
 const SEND_TIMEOUT_MS = 8_000;
 
 // Where replies go unless an email names someone else: the Girish Creations
-// inbox, shown under that name. ZEPTOMAIL_REPLY_TO picks another address.
+// inbox, shown under the name the email is from (Pocket's emails as Pocket).
+// ZEPTOMAIL_REPLY_TO picks another address.
 const DEFAULT_REPLY_TO = "runmithra@gmail.com";
 const REPLY_TO_NAME = "Girish Creations";
 
@@ -105,7 +106,7 @@ export async function sendEmail(message: EmailMessage): Promise<string | null> {
     body: JSON.stringify({
       from: { address: settings.fromAddress, name: fromName },
       to: message.to.map((recipient) => ({ email_address: recipient })),
-      reply_to: [message.replyTo ?? { address: settings.replyTo, name: REPLY_TO_NAME }],
+      reply_to: [message.replyTo ?? { address: settings.replyTo, name: fromName ?? REPLY_TO_NAME }],
       subject: message.subject,
       textbody: message.textBody,
       htmlbody: message.htmlBody,

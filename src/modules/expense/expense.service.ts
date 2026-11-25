@@ -82,7 +82,7 @@ async function notifyShares(expense: LoadedExpense, admin: RequestingAdmin, befo
           `${actor} ${wasOn ? "changed your share of" : "added you to"} ${expenseLabel(expense)}${inGroup(expense)}.`,
           paidByThem
             ? "You're down as the one who paid it."
-            : 'If your share isn\'t right, open the expense in Girish Creations and choose "This isn\'t right" so they know.',
+            : 'If your share isn\'t right, open the expense in Pocket and choose "This isn\'t right" so they know.',
         ],
         details: [
           { label: "Date", value: expense.date.toISOString().slice(0, 10) },

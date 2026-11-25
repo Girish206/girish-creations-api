@@ -67,11 +67,12 @@ test("repayments are shown, so the balances add up", () => {
   assert.ok(!buildSplitEmail(group, asha, "Ravi").textBody?.includes("Repaid so far"));
 });
 
-test("it has no logo or header card", () => {
+test("it carries the Pocket logo its header shows", () => {
   const email = buildSplitEmail(group, asha, "Ravi Kumar");
-  assert.equal(email.inlineImages, undefined);
-  assert.ok(!email.htmlBody?.includes("cid:"));
-  assert.ok(!email.htmlBody?.includes("gradient"));
+  const cid = /<img src="cid:([^"]+)"[^>]*alt="[^"]* logo"/.exec(email.htmlBody ?? "")?.[1];
+  assert.ok(cid);
+  assert.equal(email.inlineImages?.[0].cid, cid);
+  assert.equal(email.inlineImages?.[0].mimeType, "image/png");
 });
 
 test("whoever sent it isn't told someone shared it", () => {
@@ -150,4 +151,31 @@ test("a group is settling once started, repaid or closed", () => {
   assert.equal(isSettling({ settlingStartedAt: day, closedAt: null, settlements: [] }), true);
   assert.equal(isSettling({ settlingStartedAt: null, closedAt: day, settlements: [] }), true);
   assert.equal(isSettling({ settlingStartedAt: null, closedAt: null, settlements: [{}] }), true);
+});
+
+test("with the app's pictures, the email is the pictures, and the text keeps the numbers", () => {
+  const images = [
+    { mimeType: "image/jpeg" as const, data: "AAAA" },
+    { mimeType: "image/jpeg" as const, data: "BBBB" },
+  ];
+  const email = buildSplitEmail(group, asha, "Ravi Kumar", "https://app", images);
+  assert.deepEqual(
+    email.inlineImages?.slice(1).map((image) => [image.cid, image.mimeType, image.content]),
+    [
+      ["split-1", "image/jpeg", "AAAA"],
+      ["split-2", "image/jpeg", "BBBB"],
+    ],
+  );
+  assert.ok(email.htmlBody?.includes('src="cid:split-1"'));
+  assert.ok(email.htmlBody?.includes('src="cid:split-2"'));
+  assert.ok(email.htmlBody?.includes("page 2 of 2"));
+  assert.ok(!email.htmlBody?.includes("Final share"));
+  assert.ok(email.htmlBody?.includes('href="https://app"'));
+  assert.ok(email.textBody?.includes("Who pays whom:"));
+});
+
+test("without pictures it's the tables, as before", () => {
+  const email = buildSplitEmail(group, asha, "Ravi Kumar");
+  assert.equal(email.inlineImages?.length, 1);
+  assert.ok(email.htmlBody?.includes("Final share"));
 });

@@ -55,7 +55,7 @@ export async function sendReminder(input: ReminderInput, admin: { id: bigint; is
     subject: `Reminder: ${amount} to ${owed}`,
     lines: [
       `${owed} sent you a reminder: you still owe them ${amount}${where}.`,
-      "Once you've paid, they can mark it as received in Girish Creations.",
+      "Once you've paid, they can mark it as received in Pocket.",
     ],
     details: [{ label: "Still owed", value: amount }],
     footer: "You're receiving this because someone you owe money to sent a reminder.",

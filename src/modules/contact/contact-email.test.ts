@@ -40,11 +40,13 @@ test("the message keeps its line breaks", () => {
   assert.ok(email.htmlBody?.includes("Line one<br>Line two"));
 });
 
-test("it's plain, with no logo or card", () => {
+test("it carries the Girish Creations logo its header shows", () => {
   const email = buildContactEmail(contact, owner);
-  assert.equal(email.inlineImages, undefined);
-  assert.ok(!email.htmlBody?.includes("cid:"));
-  assert.ok(!email.htmlBody?.includes("gradient"));
+  const cid = /<img src="cid:([^"]+)"[^>]*alt="[^"]* logo"/.exec(email.htmlBody ?? "")?.[1];
+  assert.ok(cid);
+  assert.equal(email.inlineImages?.[0].cid, cid);
+  assert.equal(email.inlineImages?.[0].mimeType, "image/png");
+  assert.ok(email.htmlBody?.includes("Girish Creations logo"));
 });
 
 test("it's from Girish Creations, and the reply link addresses the visitor", () => {

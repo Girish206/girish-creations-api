@@ -1,5 +1,5 @@
 import type { EmailMessage } from "../../lib/email";
-import { BRAND, escapeHtml, finePrint, paragraph, quote, renderSimpleEmail, textLink } from "../../lib/email-layout";
+import { BRAND, button, detailRows, escapeHtml, finePrint, logoImages, paragraph, quote, renderEmail } from "../../lib/email-layout";
 
 export interface ContactEmailInput {
   id: bigint;
@@ -23,6 +23,7 @@ export function buildContactEmail(contact: ContactEmailInput, owner: { address: 
     replyTo: { address: contact.email, name: contact.name },
     subject: `New portfolio message: ${subject}`,
     clientReference: `contact-${contact.id}`,
+    inlineImages: logoImages(brand),
     textBody: [
       `Hi ${firstName},`,
       "",
@@ -36,17 +37,19 @@ export function buildContactEmail(contact: ContactEmailInput, owner: { address: 
       "",
       "- Girish Creations",
     ].join("\n"),
-    htmlBody: renderSimpleEmail({
+    htmlBody: renderEmail({
+      brand,
       title: "You have a new message",
       preheader: `${contact.name}: ${subject}`,
       body: [
         paragraph(`Hi ${escapeHtml(firstName)},`),
-        paragraph(
-          `<strong>${escapeHtml(contact.name)}</strong> (${escapeHtml(contact.email)}) sent a message through your portfolio.`,
-        ),
-        paragraph(`<strong>Subject:</strong> ${escapeHtml(subject)}`),
+        paragraph(`<strong>${escapeHtml(contact.name)}</strong> sent a message through your portfolio.`),
+        detailRows([
+          { label: "From", value: `${escapeHtml(contact.name)}<br><span style="font-weight: 400; color: #71717a">${escapeHtml(contact.email)}</span>` },
+          { label: "Subject", value: escapeHtml(subject) },
+        ]),
         quote(contact.message),
-        paragraph(textLink(brand, `Reply to ${contact.name}`, replyLink)),
+        button(brand, `Reply to ${contact.name}`, replyLink),
         finePrint("You can also just reply to this email. The message is saved in your admin panel too."),
       ].join("\n"),
       footer: "You're getting this because someone used the contact form on your portfolio.",

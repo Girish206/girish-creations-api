@@ -1,13 +1,15 @@
-import type { EmailMessage } from "../../lib/email";
+import type { EmailMessage, InlineImage } from "../../lib/email";
 import {
-  BRAND,
+  POCKET_BRAND,
+  button,
   dataTable,
   detailRows,
   escapeHtml,
+  logoImages,
   paragraph,
-  renderSimpleEmail,
+  renderEmail,
   sectionHeading,
-  textLink,
+  signOff,
 } from "../../lib/email-layout";
 import { maskEmail } from "../auth/auth-code";
 import type { MemberBalance, SuggestedTransfer } from "./group-balances";
@@ -18,6 +20,14 @@ export interface SplitEmailGroup {
   totalCents: number;
   balances: MemberBalance[];
   transfers: SuggestedTransfer[];
+}
+
+// A picture of the split-up as the app shows it (its share card), one per
+// page. With them the email is the pictures; without, tables.
+export interface SplitEmailImage {
+  mimeType: "image/jpeg" | "image/png";
+  // Base64, without a data: prefix.
+  data: string;
 }
 
 export interface SplitEmailRecipient {
@@ -87,8 +97,9 @@ export function buildSplitEmail(
   recipient: SplitEmailRecipient,
   sentBy: string,
   appUrl?: string,
+  images: SplitEmailImage[] = [],
 ): EmailMessage {
-  const brand = BRAND;
+  const brand = POCKET_BRAND;
   const groupName = oneLine(group.name);
   const firstName = recipient.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
@@ -120,12 +131,35 @@ export function buildSplitEmail(
     amount: formatCents(transfer.amountCents),
   }));
   const link = recipient.canOpenApp ? appUrl : undefined;
+  const pictures: InlineImage[] = images.map((image, index) => ({
+    cid: `split-${index + 1}`,
+    mimeType: image.mimeType,
+    content: image.data,
+  }));
+  const pictureAlt = (index: number) =>
+    pictures.length > 1
+      ? `Split-up for ${groupName}, page ${index + 1} of ${pictures.length}`
+      : `Split-up for ${groupName}`;
+  // The pictures, full width: they carry every number, so the email is just
+  // them with a greeting and the link. The text version keeps the numbers for
+  // mail apps that don't show pictures.
+  const pictureBody = [
+    paragraph(escapeHtml(greeting)),
+    paragraph(escapeHtml(intro)),
+    ...pictures.map(
+      (picture, index) =>
+        `<img src="cid:${picture.cid}" width="504" alt="${escapeHtml(pictureAlt(index))}" style="display: block; width: 100%; max-width: 504px; height: auto; margin: 0 0 12px; border: 0; border-radius: 12px">`,
+    ),
+    ...(link ? [button(brand, `View in ${brand.name}`, link)] : []),
+    signOff(brand),
+  ];
 
   return {
     fromName: brand.name,
     to: [{ address: recipient.email, name: recipient.name ?? undefined }],
     subject: `Split-up for ${groupName}`,
     clientReference: `group-split-${group.id}`,
+    inlineImages: [...logoImages(brand), ...pictures],
     textBody: [
       greeting,
       "",
@@ -138,15 +172,16 @@ export function buildSplitEmail(
       ...(payments.length
         ? ["Who pays whom:", ...payments.map((payment) => `${payment.from} pays ${payment.to} ${payment.amount}`)]
         : ["Everyone is settled."]),
-      ...(link ? ["", `View in Girish Creations: ${link}`] : []),
+      ...(link ? ["", `View in ${brand.name}: ${link}`] : []),
       "",
       "Regards,",
       brand.name,
     ].join("\n"),
-    htmlBody: renderSimpleEmail({
+    htmlBody: renderEmail({
+      brand,
       preheader: `${groupName}: total expense ${formatCents(group.totalCents)}`,
       title: `Split-up for ${groupName}`,
-      body: [
+      body: (pictures.length ? pictureBody : [
         paragraph(escapeHtml(greeting)),
         paragraph(escapeHtml(intro)),
         detailRows(details.map((row) => ({ label: row.label, value: escapeHtml(row.value) }))),
@@ -156,6 +191,7 @@ export function buildSplitEmail(
             emphasise: person.isRecipient,
             cells: [person.name, person.paid, person.share, person.balance].map(escapeHtml),
           })),
+          [false, true, true, true],
         ),
         ...(payments.length
           ? [
@@ -166,12 +202,13 @@ export function buildSplitEmail(
                   emphasise: payment.involvesRecipient,
                   cells: [payment.from, payment.to, payment.amount].map(escapeHtml),
                 })),
+                [false, false, true],
               ),
             ]
           : [paragraph("Everyone is settled.")]),
-        ...(link ? [paragraph(textLink(brand, "View in Girish Creations", link))] : []),
-        paragraph(`Regards,<br>${escapeHtml(brand.name)}`),
-      ].join("\n"),
+        ...(link ? [button(brand, `View in ${brand.name}`, link)] : []),
+        signOff(brand),
+      ]).join("\n"),
       footer: `You're receiving this because you're part of ${escapeHtml(groupName)}.`,
     }),
   };

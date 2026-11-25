@@ -1,6 +1,7 @@
 import type { EmailMessage } from "../../lib/email";
 import {
   BRAND,
+  POCKET_BRAND,
   button,
   detailsPanel,
   escapeHtml,
@@ -47,7 +48,9 @@ function featuresOf(account: WelcomeAccount) {
 // Sent only when someone chooses to from the admin side. The password is never
 // included: they use the one they were given, or set their own with a code.
 export function buildWelcomeEmail(account: WelcomeAccount, signInUrl?: string): EmailMessage {
-  const brand = BRAND;
+  // Pocket's welcome for anyone with Expenses or Savings; Girish Creations
+  // only for a portfolio-only account.
+  const brand = account.hasExpensesAccess || account.hasSavingsAccess ? POCKET_BRAND : BRAND;
   const firstName = account.name?.trim().split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
   const title = `Welcome to ${brand.name}`;

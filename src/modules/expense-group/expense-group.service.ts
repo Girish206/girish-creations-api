@@ -8,7 +8,7 @@ import { assertAdminUsersExist } from "../admin-user/assert-admin-users-exist";
 import { assertCanPick } from "../admin-user/connected-people";
 import { maxRepaymentCents, suggestTransfers, summarizeGroup, type GroupFund } from "./group-balances";
 import { computeFundSplit, fundPeople } from "../savings-goal/fund-split";
-import { buildSplitEmail, splitEmailAudience } from "./group-split-email";
+import { buildSplitEmail, splitEmailAudience, type SplitEmailImage } from "./group-split-email";
 import { logActivity, namesOf } from "../activity/activity.service";
 import { recordRepayment } from "../activity/repayments";
 import { sendReminder } from "../activity/reminders";
@@ -484,7 +484,7 @@ export function splitEmailBlocker(
 
 // Emails everyone in the group the split-up, when someone settling up chooses
 // to. Each email is separate, so no one sees anyone else's address.
-export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
+export async function sendSplitEmail(id: bigint, admin: RequestingAdmin, images: SplitEmailImage[] = []) {
   await findManageableGroupOrThrow(id, admin);
   const group = await prisma.expenseGroup.findUniqueOrThrow({ where: { id }, include: includeRelations });
   const summary = summaryOf(group);
@@ -518,7 +518,7 @@ export async function sendSplitEmail(id: bigint, admin: RequestingAdmin) {
   const sentBy = sender.name?.trim() || (sender.email ? maskEmail(sender.email) : "Someone");
   const emailGroup = { id, name: group.name, ...summary, transfers: suggestTransfers(summary.balances, summary.fundHolderId) };
   const results = await Promise.allSettled(
-    recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.adminSignInUrl))),
+    recipients.map((recipient) => sendEmail(buildSplitEmail(emailGroup, recipient, sentBy, env.adminSignInUrl, images))),
   );
   const failed = results.flatMap((result) => (result.status === "rejected" ? [result.reason as unknown] : []));
   for (const error of failed) {

@@ -44,7 +44,7 @@ export async function recordRepayment(
     }
     return {
       subject: change === "added" ? `Repayment of ${amount} recorded` : `Repayment of ${amount} removed`,
-      lines: [line, "If that's not right, open Girish Creations to check."],
+      lines: [line, "If that's not right, open Pocket to check."],
       footer: "You're receiving this because the repayment is between you and someone else.",
       reference: `repayment-${change}`,
     };

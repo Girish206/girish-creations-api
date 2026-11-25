@@ -9,6 +9,9 @@ export const app = express();
 
 app.use(corsMiddleware);
 app.use(appBuildHeader);
+// The split-up email carries the app's pictures of the split (base64 JPEGs),
+// more than the 100 kB default allows. (Vercel caps a request at 4.5 MB.)
+app.use("/api/admin/expense-groups/:id/split-email", express.json({ limit: "4mb" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

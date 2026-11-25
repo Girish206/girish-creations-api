@@ -13,8 +13,14 @@ const member = {
   hasSavingsAccess: false,
 };
 
-test("it comes from Girish Creations", () => {
+test("it comes from Pocket for someone with Expenses or Savings", () => {
   const email = buildWelcomeEmail(member);
+  assert.equal(email.fromName, "Pocket");
+  assert.equal(email.subject, "Welcome to Pocket");
+});
+
+test("a portfolio-only account is welcomed by Girish Creations", () => {
+  const email = buildWelcomeEmail({ ...member, hasExpensesAccess: false, hasPortfolioAccess: true });
   assert.equal(email.fromName, "Girish Creations");
   assert.equal(email.subject, "Welcome to Girish Creations");
 });
@@ -23,7 +29,7 @@ test("it greets them and lists only what they can use", () => {
   const email = buildWelcomeEmail(member);
   assert.deepEqual(email.to, [{ address: "ravi@example.com", name: "Ravi Kumar" }]);
   assert.ok(email.textBody?.startsWith("Hi Ravi,"));
-  assert.ok(email.htmlBody?.includes("<strong style=\"color: #111827\">Expenses</strong>"));
+  assert.ok(email.htmlBody?.includes("<strong style=\"color: #18181b\">Expenses</strong>"));
   assert.ok(!email.htmlBody?.includes("Savings"));
   assert.ok(email.textBody?.includes("- Expenses:"));
   assert.ok(!email.textBody?.includes("- Savings:"));
@@ -48,7 +54,7 @@ test("the mobile and sign-in button appear only when there is one", () => {
 
   const withBoth = buildWelcomeEmail({ ...member, mobile: "9876543210" }, "https://example.com/admin/login");
   assert.ok(withBoth.textBody?.includes("Or mobile: 9876543210"));
-  assert.ok(withBoth.textBody?.includes("Sign in to Girish Creations: https://example.com/admin/login"));
+  assert.ok(withBoth.textBody?.includes("Sign in to Pocket: https://example.com/admin/login"));
   assert.ok(withBoth.htmlBody?.includes('href="https://example.com/admin/login"'));
 });
 

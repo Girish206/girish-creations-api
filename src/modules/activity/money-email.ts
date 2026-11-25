@@ -1,6 +1,15 @@
 import { env } from "../../config/env";
 import { EmailError, isEmailEnabled, sendEmail, type EmailMessage } from "../../lib/email";
-import { BRAND, detailRows, escapeHtml, paragraph, renderSimpleEmail, textLink } from "../../lib/email-layout";
+import {
+  POCKET_BRAND as BRAND,
+  button,
+  detailRows,
+  escapeHtml,
+  logoImages,
+  paragraph,
+  renderEmail,
+  signOff,
+} from "../../lib/email-layout";
 import { prisma } from "../../lib/prisma";
 
 export interface NoticeRecipient {
@@ -34,17 +43,19 @@ export function buildNoticeEmail(notice: Notice, recipient: NoticeRecipient, app
     to: [{ address: recipient.email, name: recipient.name ?? undefined }],
     subject: oneLine(notice.subject),
     clientReference: notice.reference,
+    inlineImages: logoImages(BRAND),
     textBody: [
       greeting,
       "",
       ...lines.flatMap((line) => [line, ""]),
       ...details.map((row) => `${row.label}: ${row.value}`),
-      ...(link ? ["", `Open Girish Creations: ${link}`] : []),
+      ...(link ? ["", `Open Pocket: ${link}`] : []),
       "",
       "Regards,",
       BRAND.name,
     ].join("\n"),
-    htmlBody: renderSimpleEmail({
+    htmlBody: renderEmail({
+      brand: BRAND,
       preheader: lines[0] ?? notice.subject,
       title: oneLine(notice.subject),
       body: [
@@ -53,8 +64,8 @@ export function buildNoticeEmail(notice: Notice, recipient: NoticeRecipient, app
         ...(details.length
           ? [detailRows(details.map((row) => ({ label: row.label, value: escapeHtml(row.value) })))]
           : []),
-        ...(link ? [paragraph(textLink(BRAND, "Open Girish Creations", link))] : []),
-        paragraph(`Regards,<br>${escapeHtml(BRAND.name)}`),
+        ...(link ? [button(BRAND, "Open Pocket", link)] : []),
+        signOff(BRAND),
       ].join("\n"),
       footer: escapeHtml(notice.footer),
     }),

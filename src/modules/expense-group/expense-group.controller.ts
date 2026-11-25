@@ -88,8 +88,23 @@ export async function remindGroupDebtHandler(req: Request, res: Response) {
   res.status(204).send();
 }
 
+// The pictures of the split-up the app drew (its share card), to put in the
+// email. Optional: an older app sends none, and gets the email as tables.
+const splitEmailSchema = z.object({
+  images: z
+    .array(
+      z.object({
+        mimeType: z.enum(["image/jpeg", "image/png"]),
+        data: z.string().min(1).regex(/^[A-Za-z0-9+/]+={0,2}$/, "Not base64"),
+      }),
+    )
+    .max(8)
+    .optional(),
+});
+
 export async function sendSplitEmailHandler(req: Request, res: Response) {
-  const result = await expenseGroupService.sendSplitEmail(parseId(req.params.id), requestingAdmin(req));
+  const { images } = splitEmailSchema.parse(req.body ?? {});
+  const result = await expenseGroupService.sendSplitEmail(parseId(req.params.id), requestingAdmin(req), images ?? []);
   res.json({ data: result });
 }
 

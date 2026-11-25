@@ -463,7 +463,7 @@ async function recordContribution(
       change === "added"
         ? `${name(admin.id)} recorded ${amount} from you in the savings goal ${goal.name}.`
         : `${name(admin.id)} removed your contribution of ${amount} from the savings goal ${goal.name}.`,
-      "If that's not right, open Girish Creations to check.",
+      "If that's not right, open Pocket to check.",
     ],
     footer: "You're receiving this because the contribution is yours.",
     reference: `contribution-${change}-${goal.id}`,

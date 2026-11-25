@@ -20,7 +20,7 @@ test("a notice greets by first name and escapes what people typed", () => {
 
 test("only people who can open the app get the link", () => {
   const email = buildNoticeEmail(notice, { id: 1n, email: "r@x.in", name: null, canOpenApp: true }, "https://app");
-  assert.match(email.textBody!, /Open Girish Creations: https:\/\/app/);
+  assert.match(email.textBody!, /Open Pocket: https:\/\/app/);
 });
 
 test("amounts read as the app shows them", () => {

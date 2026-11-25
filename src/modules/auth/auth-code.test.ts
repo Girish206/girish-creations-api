@@ -32,7 +32,7 @@ test("emails are masked but recognisable", () => {
 
 test("a code email carries the code, but isn't logged by reference", () => {
   const email = buildCodeEmail({ address: "a@b.com" }, "123456", "reset");
-  assert.equal(email.subject, "Reset your Girish Creations password");
+  assert.equal(email.subject, "Reset your Pocket password");
   assert.ok(email.textBody?.includes("123456"));
   assert.ok(email.htmlBody?.includes("123456"));
   assert.ok(!email.subject.includes("123456"));
@@ -41,28 +41,29 @@ test("a code email carries the code, but isn't logged by reference", () => {
 
 test("a sign-in code and a password reset say different things", () => {
   const login = buildCodeEmail({ address: "a@b.com" }, "123456", "login");
-  assert.equal(login.subject, "Your Girish Creations sign-in code");
-  assert.ok(login.textBody?.includes("sign in to Girish Creations"));
+  assert.equal(login.subject, "Your Pocket sign-in code");
+  assert.ok(login.textBody?.includes("sign in to Pocket"));
   assert.ok(login.textBody?.includes("Your code: 123456"));
 });
 
-test("a code email is from Girish Creations, in its colours", () => {
+test("a code email is from Pocket, in its colours", () => {
   const email = buildCodeEmail({ address: "a@b.com" }, "123456", "login");
-  assert.equal(email.fromName, "Girish Creations");
-  assert.ok(email.htmlBody?.includes("#4f46e5"));
+  assert.equal(email.fromName, "Pocket");
+  assert.ok(email.htmlBody?.includes("#9e6207"));
 });
 
-test("these emails are plain: no logo, header or card", () => {
+test("these emails carry the Pocket logo their header shows", () => {
   const emails = [
     buildCodeEmail({ address: "a@b.com" }, "123456", "login"),
     buildCodeEmail({ address: "a@b.com" }, "123456", "reset"),
     buildPasswordChangedEmail({ address: "a@b.com" }),
   ];
   for (const email of emails) {
-    assert.equal(email.inlineImages, undefined);
-    assert.ok(!email.htmlBody?.includes("cid:"));
-    assert.ok(!email.htmlBody?.includes("gradient"));
-    assert.ok(!email.htmlBody?.includes("border-radius"));
+    const cid = /<img src="cid:([^"]+)"[^>]*alt="[^"]* logo"/.exec(email.htmlBody ?? "")?.[1];
+    assert.ok(cid);
+    assert.equal(email.inlineImages?.[0].cid, cid);
+    assert.equal(email.inlineImages?.[0].mimeType, "image/png");
+    assert.ok(email.htmlBody?.includes("Pocket logo"));
   }
 });
 
