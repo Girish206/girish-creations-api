@@ -162,7 +162,8 @@ export async function getExpense(id: bigint, admin: RequestingAdmin) {
 
 // Every month someone has expenses in, newest first, with how many and the
 // total of their own share — for the month picker and the dashboard, without
-// loading every expense.
+// loading every expense. totalCents is the whole amount of the bills they're
+// on (paid, or in the split), shown beside their share.
 export async function listExpenseMonths(admin: RequestingAdmin) {
   const rows = await prisma.expense.findMany({
     where: admin.isSuperAdmin ? undefined : involving(admin),
@@ -173,15 +174,24 @@ export async function listExpenseMonths(admin: RequestingAdmin) {
       splitParticipants: { select: { adminUserId: true, shareAmount: true } },
     },
   });
-  const months = new Map<string, { month: string; count: number; myShareCents: number }>();
+  const months = new Map<string, { month: string; count: number; myShareCents: number; totalCents: number }>();
   for (const row of rows) {
     const key = row.date.toISOString().slice(0, 7);
-    const entry = months.get(key) ?? { month: key, count: 0, myShareCents: 0 };
+    const entry = months.get(key) ?? { month: key, count: 0, myShareCents: 0, totalCents: 0 };
     entry.count += 1;
     entry.myShareCents += myShareCents(row, admin.id);
+    if (isOnExpense(row, admin.id)) entry.totalCents += Math.round(Number(row.amount) * 100);
     months.set(key, entry);
   }
   return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+// Whether this person is on an expense: they paid it, or they're in its split.
+export function isOnExpense(
+  expense: { paidByAdminUserId: bigint; splitParticipants: { adminUserId: bigint }[] },
+  adminId: bigint,
+) {
+  return expense.paidByAdminUserId === adminId || expense.splitParticipants.some((p) => p.adminUserId === adminId);
 }
 
 // What an expense cost this person: their share when split, all of it when
